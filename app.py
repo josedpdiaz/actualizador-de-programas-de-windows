@@ -14,7 +14,7 @@ import socket
 import threading
 import subprocess
 import webbrowser
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 # Asegurar codificación UTF-8 en consola de Windows
@@ -532,8 +532,9 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
 
-class ReusableHTTPServer(HTTPServer):
+class ReusableHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
 def free_port(port: int):
