@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Actualizador Automático de Programas - Windows</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-wrapper">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo-box">
+          <div class="logo-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+          </div>
+          <div class="glow-orb"></div>
+        </div>
+        <div class="header-title">
+          <div class="title-row">
+            <h1>Actualizador de Programas</h1>
+            <span class="badge-pill">Windows 11 / 10</span>
+          </div>
+          <p class="subtitle">Detección y actualización automática y silenciosa mediante Windows Package Manager (winget)</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="btn-scan" class="btn btn-secondary" title="Escanear actualizaciones disponibles">
+          <svg class="icon-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+            <path d="M16 21h5v-5"/>
+          </svg>
+          <span>Escanear Ahora</span>
+        </button>
+
+        <button id="btn-upgrade-selected" class="btn btn-accent" disabled title="Actualizar únicamente las aplicaciones marcadas">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="18 15 12 9 6 15"/>
+          </svg>
+          <span>Actualizar Seleccionados (<span id="selected-count">0</span>)</span>
+        </button>
+
+        <button id="btn-upgrade-all" class="btn btn-primary" title="Actualizar todos los programas en segundo plano">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+          <span>⚡ Actualizar Todo</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Barra de progreso global durante actualización -->
+    <div id="progress-container" class="progress-container hidden">
+      <div class="progress-info">
+        <span id="progress-text">Iniciando actualización...</span>
+        <span id="progress-percent">0%</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%;"></div>
+      </div>
+    </div>
+
+    <!-- KPIs / Tarjetas de estado -->
+    <section class="stats-grid">
+      <div class="stat-card stat-alert">
+        <div class="stat-content">
+          <span class="stat-label">Actualizaciones Disponibles</span>
+          <div class="stat-number-row">
+            <span id="stat-outdated" class="stat-value">--</span>
+            <span class="stat-indicator pulse"></span>
+          </div>
+          <span class="stat-desc">Programas listos para pasar a su última versión</span>
+        </div>
+        <div class="stat-icon-wrap alert-bg">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-content">
+          <span class="stat-label">Programas Detectados</span>
+          <span id="stat-installed" class="stat-value">--</span>
+          <span class="stat-desc">Aplicaciones instaladas en el sistema</span>
+        </div>
+        <div class="stat-icon-wrap primary-bg">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-content">
+          <span class="stat-label">Estado del Motor</span>
+          <span id="stat-status-text" class="stat-value text-status">Listo</span>
+          <span id="stat-last-scan" class="stat-desc">Última comprobación: --</span>
+        </div>
+        <div class="stat-icon-wrap success-bg">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controles de filtrado y pestañas -->
+    <div class="controls-panel">
+      <div class="tabs-nav">
+        <button id="tab-outdated" class="tab-btn active">
+          Actualizaciones Pendientes
+          <span id="tab-badge-outdated" class="tab-badge">0</span>
+        </button>
+        <button id="tab-installed" class="tab-btn">
+          Todos los Programas
+          <span id="tab-badge-installed" class="tab-badge muted">0</span>
+        </button>
+        <button id="tab-logs" class="tab-btn">
+          Terminal en Vivo
+          <span class="live-dot"></span>
+        </button>
+      </div>
+
+      <div class="search-and-tools">
+        <div class="search-input-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input type="text" id="search-input" placeholder="Buscar por programa o identificador...">
+          <button id="clear-search" class="clear-btn hidden">&times;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vista 1: Tabla de actualizaciones pendientes -->
+    <main id="view-outdated" class="content-view">
+      <div class="table-toolbar">
+        <div class="selection-tools">
+          <label class="checkbox-container">
+            <input type="checkbox" id="select-all-checkbox" checked>
+            <span class="checkmark"></span>
+            <span class="checkbox-label">Seleccionar todo (<span id="visible-count">0</span>)</span>
+          </label>
+        </div>
+        <div class="hint-text">
+          <span>Consejo: Puedes hacer clic en <strong>⚡ Actualizar Todo</strong> para procesar la lista desatendida.</span>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table class="apps-table">
+          <thead>
+            <tr>
+              <th width="44"></th>
+              <th>Programa</th>
+              <th>Identificador</th>
+              <th>Versión Actual</th>
+              <th>Nueva Versión</th>
+              <th>Origen</th>
+              <th width="140" class="text-right">Acción</th>
+            </tr>
+          </thead>
+          <tbody id="outdated-table-body">
+            <tr>
+              <td colspan="7" class="loading-state">
+                <div class="spinner"></div>
+                <p>Buscando actualizaciones de programas con winget...</p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+
+    <!-- Vista 2: Todos los programas instalados -->
+    <main id="view-installed" class="content-view hidden">
+      <div class="table-container">
+        <table class="apps-table">
+          <thead>
+            <tr>
+              <th>Programa</th>
+              <th>Identificador</th>
+              <th>Versión Instalada</th>
+              <th>Versión Disponible</th>
+              <th>Origen</th>
+            </tr>
+          </thead>
+          <tbody id="installed-table-body">
+            <tr>
+              <td colspan="5" class="loading-state">
+                <div class="spinner"></div>
+                <p>Cargando lista de programas instalados...</p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+
+    <!-- Vista 3: Consola de terminal en vivo -->
+    <main id="view-logs" class="content-view hidden">
+      <div class="terminal-container">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+          </div>
+          <span class="terminal-title">Registro en Tiempo Real (winget stream)</span>
+          <div class="terminal-actions">
+            <label class="autoscroll-toggle">
+              <input type="checkbox" id="autoscroll-check" checked>
+              <span>Auto-scroll</span>
+            </label>
+            <button id="btn-clear-logs" class="btn-icon" title="Limpiar pantalla">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div id="terminal-body" class="terminal-body">
+          <div class="log-entry log-info">[SISTEMA] Motor de actualización listo. Esperando operaciones...</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="footer-left">
+        <span>03-IA-ACTUALIZADOR-PROGRAMAS-WINDOWS</span>
+        <span class="divider">•</span>
+        <span>Conectado a GitHub: <a href="https://github.com/josedpdiaz/03-ia-actualizador-programas-windows" target="_blank" class="github-link">josedpdiaz/03-ia-actualizador-programas-windows</a></span>
+      </div>
+      <div class="footer-right">
+        <span>Eficaz, silencioso y seguro</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Notificaciones Toast -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
