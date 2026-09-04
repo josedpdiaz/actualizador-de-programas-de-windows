@@ -16,6 +16,7 @@ import subprocess
 import webbrowser
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+import urllib.request
 
 # Asegurar codificación UTF-8 en consola de Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -539,8 +540,7 @@ class ReusableHTTPServer(ThreadingHTTPServer):
 
 def free_port(port: int):
     try:
-        cur_pid = os.getpid()
-        cmd = f'powershell -NoProfile -Command "$conns = Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue; if ($conns) {{ foreach ($c in $conns) {{ if ($c.OwningProcess -and $c.OwningProcess -ne {cur_pid}) {{ Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }} }} }}"'
+        cmd = f'powershell -NoProfile -Command "$conns = Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue; if ($conns) {{ foreach ($c in $conns) {{ Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }} }}"'
         subprocess.run(cmd, shell=True, timeout=4)
         time.sleep(0.3)
     except Exception:
@@ -568,8 +568,38 @@ def open_desktop_window(url: str):
     webbrowser.open(url)
 
 
+def check_already_running() -> bool:
+    try:
+        req = urllib.request.Request(f"http://{HOST}:{PORT}/api/status", headers={"User-Agent": "SingleInstance"})
+        with urllib.request.urlopen(req, timeout=0.8) as resp:
+            if resp.status == 200:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def main():
     global PORT
+
+    # 1. Si la aplicación ya está activa en segundo plano
+    if check_already_running():
+        app_url = f"http://{HOST}:{PORT}"
+        print(f"El Actualizador de Programas ya se encuentra en ejecución en {app_url}.")
+        if "--no-browser" not in sys.argv:
+            focused = False
+            try:
+                cmd = 'powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $ws.AppActivate(\'Actualizador de Programas\')"'
+                res = subprocess.check_output(cmd, shell=True, text=True).strip()
+                if "True" in res:
+                    focused = True
+            except Exception:
+                pass
+            if not focused:
+                open_desktop_window(app_url)
+        sys.exit(0)
+
+    # 2. Si no estaba corriendo, limpiar posibles procesos muertos e iniciar
     free_port(PORT)
     while not is_port_available(PORT) and PORT < 5060:
         PORT += 1
