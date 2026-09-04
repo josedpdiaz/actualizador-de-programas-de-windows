@@ -17,6 +17,14 @@ import webbrowser
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
+# Asegurar codificación UTF-8 en consola de Windows
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 PORT = 5055
 HOST = "127.0.0.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,7 +54,14 @@ def add_log(message: str, level: str = "info"):
         app_state["logs"].append(entry)
         if len(app_state["logs"]) > 2000:
             app_state["logs"].pop(0)
-    print(f"[{timestamp}] [{level.upper()}] {message}", flush=True)
+    try:
+        print(f"[{timestamp}] [{level.upper()}] {message}", flush=True)
+    except Exception:
+        try:
+            clean = message.encode("ascii", "replace").decode("ascii")
+            print(f"[{timestamp}] [{level.upper()}] {clean}", flush=True)
+        except Exception:
+            pass
 
 
 def parse_winget_table(output_text: str):
@@ -249,6 +264,7 @@ def upgrade_selected_thread(package_ids: list):
         app_state["current_action"] = f"Actualizando {total} programas seleccionados..."
         
     add_log(f"Iniciando actualización selectiva de {total} programas...", "info")
+    add_log("Aviso: Si el programa requiere permisos de Administrador, acepta la ventana de confirmación de Windows (UAC).", "info")
     
     for index, pkg_id in enumerate(package_ids):
         with state_lock:
@@ -261,7 +277,7 @@ def upgrade_selected_thread(package_ids: list):
         cmd = [
             "winget", "upgrade",
             "--id", pkg_id,
-            "--exact",
+            "--include-unknown",
             "--accept-package-agreements",
             "--accept-source-agreements",
             "--silent"
@@ -282,11 +298,14 @@ def upgrade_selected_thread(package_ids: list):
                 if line:
                     add_log(f"[{pkg_id}] {line}", "process")
             process.stdout.close()
-            ret = process.wait()
+            ret = process.wait(timeout=300)
             if ret == 0:
-                add_log(f"✓ {pkg_id} actualizado exitosamente.", "success")
+                add_log(f"OK: {pkg_id} actualizado exitosamente.", "success")
             else:
-                add_log(f"⚠ {pkg_id} completado con código {ret}", "warning")
+                add_log(f"Finalizado: {pkg_id} con código de retorno {ret}.", "warning")
+        except subprocess.TimeoutExpired:
+            process.kill()
+            add_log(f"Tiempo de espera agotado actualizando {pkg_id}.", "warning")
         except Exception as e:
             add_log(f"Error al actualizar {pkg_id}: {str(e)}", "error")
             

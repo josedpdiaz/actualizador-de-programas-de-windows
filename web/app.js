@@ -302,7 +302,7 @@ function renderOutdatedTable() {
   }
 
   let html = '';
-  filtered.forEach(app => {
+  filtered.forEach((app, idx) => {
     const isChecked = selectedAppIds.has(app.id);
     const initial = app.name ? app.name.charAt(0).toUpperCase() : '?';
 
@@ -339,7 +339,7 @@ function renderOutdatedTable() {
           <span class="source-badge">${escapeHtml(app.source || 'winget')}</span>
         </td>
         <td class="text-right">
-          <button class="btn-row-action" onclick="triggerUpgradeSingle('${escapeHtml(app.id)}', '${escapeHtml(app.name)}')">
+          <button class="btn-row-action btn-update-single" data-pkg-id="${escapeHtml(app.id)}" data-pkg-name="${escapeHtml(app.name)}">
             Actualizar
           </button>
         </td>
@@ -359,6 +359,15 @@ function renderOutdatedTable() {
         selectedAppIds.delete(id);
       }
       updateSelectionUI();
+    });
+  });
+
+  // Listeners a los botones individuales de actualización (sin inline onclick)
+  dom.outdatedTableBody.querySelectorAll('.btn-update-single').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const pkgId = btn.getAttribute('data-pkg-id');
+      const pkgName = btn.getAttribute('data-pkg-name');
+      executeUpgradeSingle(pkgId, pkgName, btn);
     });
   });
 }
@@ -421,6 +430,31 @@ function updateSelectionUI() {
   }
 }
 
+// Modal de Confirmación estilizado In-App
+function showConfirmModal(title, message, onConfirm) {
+  const modal = document.getElementById('confirm-modal');
+  const modalTitle = document.getElementById('modal-title');
+  const modalMsg = document.getElementById('modal-message');
+  const btnCancel = document.getElementById('modal-btn-cancel');
+  const btnConfirm = document.getElementById('modal-btn-confirm');
+
+  modalTitle.textContent = title;
+  modalMsg.textContent = message;
+  modal.classList.remove('hidden');
+
+  const cleanup = () => {
+    modal.classList.add('hidden');
+    btnConfirm.onclick = null;
+    btnCancel.onclick = null;
+  };
+
+  btnCancel.onclick = cleanup;
+  btnConfirm.onclick = () => {
+    cleanup();
+    if (typeof onConfirm === 'function') onConfirm();
+  };
+}
+
 // Disparadores de Acciones
 async function triggerScan() {
   try {
@@ -437,68 +471,92 @@ async function triggerScan() {
   }
 }
 
-async function triggerUpgradeAll() {
-  if (!confirm(`¿Deseas actualizar los ${outdatedApps.length} programas automáticamente ahora?`)) {
-    return;
-  }
-  try {
-    showToast("Iniciando actualización automática de todos los programas...", "info");
-    switchTab('logs');
-    const res = await fetch('/api/upgrade-all', { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.message, "warning");
+function triggerUpgradeAll() {
+  showConfirmModal(
+    "⚡ ¿Actualizar Todos los Programas?",
+    `Se van a descargar e instalar en segundo plano las actualizaciones de los ${outdatedApps.length} programas pendientes.`,
+    async () => {
+      try {
+        showToast("Iniciando actualización automática global...", "info");
+        switchTab('logs');
+        const res = await fetch('/api/upgrade-all', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.message, "warning");
+        }
+      } catch (err) {
+        showToast("Error al iniciar actualización", "error");
+      }
     }
-  } catch (err) {
-    showToast("Error al iniciar actualización", "error");
-  }
+  );
 }
 
-async function triggerUpgradeSelected() {
+function triggerUpgradeSelected() {
   const ids = Array.from(selectedAppIds);
-  if (ids.length === 0) return;
-
-  if (!confirm(`¿Deseas actualizar los ${ids.length} programas seleccionados?`)) {
+  if (ids.length === 0) {
+    showToast("No has seleccionado ningún programa", "warning");
     return;
   }
 
-  try {
-    showToast(`Actualizando ${ids.length} programas...`, "info");
-    switchTab('logs');
-    const res = await fetch('/api/upgrade-selected', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: ids })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.message, "warning");
+  showConfirmModal(
+    `¿Actualizar los ${ids.length} programas seleccionados?`,
+    `Se actualizarán únicamente los ${ids.length} programas marcados con casilla.`,
+    async () => {
+      try {
+        showToast(`Iniciando actualización de ${ids.length} programas...`, "info");
+        switchTab('logs');
+        const res = await fetch('/api/upgrade-selected', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: ids })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.message, "warning");
+        }
+      } catch (err) {
+        showToast("Error al conectar con el servidor", "error");
+      }
     }
-  } catch (err) {
-    showToast("Error al iniciar actualización", "error");
-  }
+  );
 }
 
-window.triggerUpgradeSingle = async function(id, name) {
-  if (!confirm(`¿Deseas actualizar "${name}" ahora?`)) {
+async function executeUpgradeSingle(id, name, buttonEl) {
+  if (isUpdatingOrScanning) {
+    showToast("Ya hay una tarea en ejecución. Espera a que finalice.", "warning");
     return;
   }
+
+  if (buttonEl) {
+    buttonEl.disabled = true;
+    buttonEl.textContent = "Iniciando...";
+  }
+
+  showToast(`Actualizando "${name}"...`, "info");
+  switchTab('logs');
+
   try {
-    showToast(`Actualizando ${name}...`, "info");
-    switchTab('logs');
     const res = await fetch('/api/upgrade-selected', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: [id] })
     });
+    const data = await res.json();
     if (!res.ok) {
-      const data = await res.json();
-      showToast(data.message, "warning");
+      showToast(data.message || "Error al actualizar", "warning");
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        buttonEl.textContent = "Actualizar";
+      }
     }
   } catch (err) {
-    showToast("Error al actualizar", "error");
+    showToast("Error de conexión al actualizar", "error");
+    if (buttonEl) {
+      buttonEl.disabled = false;
+      buttonEl.textContent = "Actualizar";
+    }
   }
-};
+}
 
 // Polling de Estado y Logs
 function startPolling() {
