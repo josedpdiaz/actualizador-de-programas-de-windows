@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=1.2.0">
+  <link rel="stylesheet" href="styles.css?v=1.2.1">
 </head>
 <body>
   <div class="app-wrapper">
@@ -25,7 +25,7 @@
         <div class="header-title">
           <div class="title-row">
             <h1>Actualizador de Programas</h1>
-            <span class="badge-pill badge-version" id="app-version-badge">v1.2.0</span>
+            <span class="badge-pill badge-version" id="app-version-badge">v1.2.1</span>
             <span class="badge-pill">Windows 11 / 10</span>
           </div>
           <p class="subtitle">Detección y actualización automática y silenciosa mediante Windows Package Manager (winget)</p>
@@ -166,13 +166,13 @@
         <table class="apps-table">
           <thead>
             <tr>
-              <th width="44"></th>
+              <th width="38"></th>
               <th>Programa</th>
               <th>Identificador</th>
-              <th>Versión Actual</th>
-              <th>Nueva Versión</th>
-              <th>Origen</th>
-              <th width="170" class="text-right">Acción</th>
+              <th class="text-center">Versión Actual</th>
+              <th class="text-center">Nueva Versión</th>
+              <th class="text-center">Origen</th>
+              <th class="text-right col-actions">Acción</th>
             </tr>
           </thead>
           <tbody id="outdated-table-body">
@@ -195,10 +195,10 @@
             <tr>
               <th>Programa</th>
               <th>Identificador</th>
-              <th>Versión Instalada</th>
-              <th>Versión Disponible</th>
-              <th>Origen</th>
-              <th width="140" class="text-right">Acción</th>
+              <th class="text-center">Versión Instalada</th>
+              <th class="text-center">Versión Disponible</th>
+              <th class="text-center">Origen</th>
+              <th class="text-right col-actions-installed">Acción</th>
             </tr>
           </thead>
           <tbody id="installed-table-body">
@@ -266,7 +266,7 @@
       <div class="footer-left">
         <span>Actualizador de Programas de Windows</span>
         <span class="divider">•</span>
-        <span class="version-tag">v1.2.0</span>
+        <span class="version-tag">v1.2.1</span>
         <span class="divider">•</span>
         <span>GitHub: <a href="https://github.com/josedpdiaz/actualizador-de-programas-de-windows" target="_blank" class="github-link">josedpdiaz/actualizador-de-programas-de-windows</a></span>
       </div>
@@ -279,6 +279,6 @@
   <!-- Notificaciones Toast -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=1.2.0"></script>
+  <script src="app.js?v=1.2.1"></script>
 </body>
 </html>

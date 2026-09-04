@@ -6,6 +6,20 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/
 
 ---
 
+## 🚀 [v1.2.1] — 05/09/2026
+### 🎨 Mejoras de Interfaz (UI/UX) y Visibilidad
+- **Visibilidad Completa del Botón Rojo `Quitar`:**
+  - Se optimizó el ancho de la columna de Acción (`.col-actions`) a 195px fijos con margen de seguridad.
+  - Ahora ambos botones (`Actualizar` y `Quitar`) se muestran de forma completa, limpia y holgada sin recorte lateral en ninguna resolución.
+- **Optimización de Espaciado en Tablas:**
+  - Reducción del acolchado horizontal por celda (de 18px a 12px) para que todas las columnas encajen con elegancia sin forzar scroll horizontal.
+  - Truncado suave con puntos suspensivos (`...`) en identificadores de paquetes largos (`OpenMedia.4KVideoDownloaderPlus`), manteniendo el nombre completo legible mediante tooltip flotante.
+- **Mejora del Lanzador de Escritorio:**
+  - Aumento del tamaño por defecto de la ventana independiente a 1320x860 píxeles.
+  - Servidor multihilo `ThreadingHTTPServer` para respuesta ultra-rápida en segundo plano.
+
+---
+
 ## 🚀 [v1.2.0] — 04/09/2026
 ### ✨ Novedades
 - **Desinstalación Oficial "Al Vuelo":**

@@ -29,7 +29,7 @@ PORT = 5055
 HOST = "127.0.0.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 # Estado global de la aplicación
 app_state = {
@@ -539,7 +539,8 @@ class ReusableHTTPServer(ThreadingHTTPServer):
 
 def free_port(port: int):
     try:
-        cmd = f'powershell -NoProfile -Command "$conns = Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue; if ($conns) {{ foreach ($c in $conns) {{ Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }} }}"'
+        cur_pid = os.getpid()
+        cmd = f'powershell -NoProfile -Command "$conns = Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue; if ($conns) {{ foreach ($c in $conns) {{ if ($c.OwningProcess -and $c.OwningProcess -ne {cur_pid}) {{ Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }} }} }}"'
         subprocess.run(cmd, shell=True, timeout=4)
         time.sleep(0.3)
     except Exception:
@@ -560,7 +561,7 @@ def open_desktop_window(url: str):
     for edge in edge_paths:
         if os.path.isfile(edge):
             try:
-                subprocess.Popen([edge, f"--app={url}", "--window-size=1260,840"])
+                subprocess.Popen([edge, f"--app={url}", "--window-size=1320,860"])
                 return
             except Exception:
                 pass
@@ -591,9 +592,15 @@ def main():
 
     try:
         httpd.serve_forever()
-    except KeyboardInterrupt:
-        print("\nCerrando aplicación...")
-        httpd.server_close()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    except Exception as e:
+        print(f"Excepción en servidor: {e}")
+    finally:
+        try:
+            httpd.server_close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
