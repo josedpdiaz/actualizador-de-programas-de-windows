@@ -295,10 +295,13 @@ def upgrade_selected_thread(package_ids: list):
                 errors="replace",
                 bufsize=1
             )
+            has_tech_conflict = False
             for raw_line in iter(process.stdout.readline, ''):
                 line = raw_line.strip()
                 if line:
                     add_log(f"[{pkg_id}] {line}", "process")
+                    if "tecnología de instalación es diferente" in line.lower():
+                        has_tech_conflict = True
             process.stdout.close()
             ret = process.wait(timeout=300)
             if ret == 0:
@@ -311,10 +314,13 @@ def upgrade_selected_thread(package_ids: list):
                     if pkg_id not in app_state["updated_ids"]:
                         app_state["updated_ids"].append(pkg_id)
             else:
-                add_log(f"Aviso: {pkg_id} finalizó con código {ret}. Consulta la terminal para ver el detalle.", "warning")
+                if has_tech_conflict:
+                    add_log(f"ℹ️ {pkg_id}: Existen versiones anteriores con tecnologías de instalación distintas instaladas en este equipo (ej. EXE vs MSI). Winget requiere desinstalar la versión antigua desde Configuración de Windows > Aplicaciones para poder instalar la nueva.", "warning")
+                else:
+                    add_log(f"Aviso: {pkg_id} finalizó con código {ret}. Consulta la terminal para ver el detalle.", "warning")
                 with state_lock:
                     if pkg_id not in [f.get("id") for f in app_state["failed_ids"]]:
-                        app_state["failed_ids"].append({"id": pkg_id, "code": ret})
+                        app_state["failed_ids"].append({"id": pkg_id, "code": ret, "reason": "conflict" if has_tech_conflict else "other"})
         except subprocess.TimeoutExpired:
             process.kill()
             add_log(f"Tiempo de espera agotado actualizando {pkg_id}.", "warning")
