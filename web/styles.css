@@ -291,6 +291,12 @@ body {
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(18, 24, 38, 0.75) 100%);
 }
 
+.stat-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .stat-label {
   font-size: 0.82rem;
   font-weight: 600;
