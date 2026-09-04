@@ -4,6 +4,7 @@ let currentTab = 'outdated';
 let outdatedApps = [];
 let installedApps = [];
 let selectedAppIds = new Set();
+let knownUpdatedIds = new Set();
 let lastLogIndex = 0;
 let pollTimer = null;
 let isUpdatingOrScanning = false;
@@ -147,7 +148,7 @@ async function refreshAllData() {
 async function checkStatus() {
   try {
     const res = await fetch('/api/status');
-    if (!res.ok) return;
+    if (!res.ok) return null;
     const status = await res.json();
 
     isUpdatingOrScanning = status.is_scanning || status.is_updating;
@@ -168,6 +169,45 @@ async function checkStatus() {
       dom.statLastScan.textContent = `Última comprobación: ${status.last_scan_time}`;
     }
 
+    // Procesar programas recién actualizados en tiempo real
+    if (status.updated_ids && status.updated_ids.length > 0) {
+      status.updated_ids.forEach(pkgId => {
+        const lowerId = pkgId.toLowerCase();
+        if (!knownUpdatedIds.has(lowerId)) {
+          knownUpdatedIds.add(lowerId);
+          animateAndRemoveUpdatedApp(pkgId);
+        }
+      });
+    }
+
+    // Procesar programas que requieran atención
+    if (status.failed_ids && status.failed_ids.length > 0) {
+      status.failed_ids.forEach(f => {
+        const pkgId = f.id;
+        const rows = dom.outdatedTableBody.querySelectorAll('tr[data-id]');
+        for (const r of rows) {
+          const id = r.getAttribute('data-id');
+          if (id && id.toLowerCase() === pkgId.toLowerCase()) {
+            const btn = r.querySelector('.btn-update-single');
+            if (btn && !btn.classList.contains('badge-updated-warning')) {
+              btn.className = 'btn-row-action btn-update-single badge-updated-warning';
+              btn.innerHTML = `
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="8" x2="12" y2="12"></line>
+                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <span>Revisar</span>
+              `;
+              btn.disabled = false;
+              btn.title = "El instalador reportó un aviso o incompatibilidad de versión. Consulta la pestaña Terminal en Vivo.";
+            }
+            break;
+          }
+        }
+      });
+    }
+
     // Botón Escanear animación
     const icon = dom.btnScan.querySelector('.icon-spin');
     if (icon) {
@@ -186,8 +226,71 @@ async function checkStatus() {
       dom.progressContainer.classList.add('hidden');
     }
 
+    return status;
   } catch (err) {
     console.error("Error al obtener estado:", err);
+    return null;
+  }
+}
+
+function animateAndRemoveUpdatedApp(pkgId) {
+  // Buscar fila en la tabla de actualizaciones pendientes
+  const rows = dom.outdatedTableBody.querySelectorAll('tr[data-id]');
+  let targetRow = null;
+  for (const r of rows) {
+    const id = r.getAttribute('data-id');
+    if (id && id.toLowerCase() === pkgId.toLowerCase()) {
+      targetRow = r;
+      break;
+    }
+  }
+
+  const appObj = outdatedApps.find(a => a.id.toLowerCase() === pkgId.toLowerCase());
+  const appName = appObj ? appObj.name : pkgId;
+
+  if (targetRow) {
+    // 1. Mostrar estado de éxito inmediato en la fila
+    const btn = targetRow.querySelector('.btn-update-single');
+    if (btn) {
+      btn.className = 'badge-updated-success';
+      btn.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        <span>Actualizado</span>
+      `;
+      btn.disabled = true;
+    }
+
+    targetRow.classList.add('row-just-updated');
+    showToast(`✓ "${appName}" se ha actualizado correctamente.`, "success");
+
+    // 2. Deseleccionar
+    selectedAppIds.delete(pkgId);
+
+    // 3. Tras 1.5 segundos de confirmación visual, desvanecer y remover de pendientes
+    setTimeout(() => {
+      targetRow.classList.add('row-fading-out');
+      setTimeout(() => {
+        targetRow.remove();
+        outdatedApps = outdatedApps.filter(a => a.id.toLowerCase() !== pkgId.toLowerCase());
+        dom.statOutdated.textContent = outdatedApps.length;
+        dom.tabBadgeOutdated.textContent = outdatedApps.length;
+        dom.visibleCount.textContent = getFilteredOutdated().length;
+        updateSelectionUI();
+
+        if (outdatedApps.length === 0) {
+          renderOutdatedTable();
+        }
+      }, 500);
+    }, 1500);
+  } else {
+    // Si no está visible en el DOM actualmente (por filtro de búsqueda u otra pestaña)
+    outdatedApps = outdatedApps.filter(a => a.id.toLowerCase() !== pkgId.toLowerCase());
+    selectedAppIds.delete(pkgId);
+    dom.statOutdated.textContent = outdatedApps.length;
+    dom.tabBadgeOutdated.textContent = outdatedApps.length;
+    updateSelectionUI();
   }
 }
 
@@ -562,10 +665,13 @@ async function executeUpgradeSingle(id, name, buttonEl) {
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
-    await checkStatus();
+    const status = await checkStatus();
     await fetchLogs();
-    if (!isUpdatingOrScanning && outdatedApps.length === 0) {
-      await loadOutdatedApps();
+
+    if (status && status.outdated_count !== outdatedApps.length) {
+      if (!status.is_updating) {
+        await loadOutdatedApps();
+      }
     }
   }, 1200);
 }

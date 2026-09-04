@@ -42,6 +42,8 @@ app_state = {
     "progress_percent": 0,
     "total_to_update": 0,
     "updated_count": 0,
+    "updated_ids": [],
+    "failed_ids": [],
 }
 
 state_lock = threading.Lock()
@@ -301,8 +303,18 @@ def upgrade_selected_thread(package_ids: list):
             ret = process.wait(timeout=300)
             if ret == 0:
                 add_log(f"OK: {pkg_id} actualizado exitosamente.", "success")
+                with state_lock:
+                    app_state["outdated_apps"] = [
+                        a for a in app_state["outdated_apps"]
+                        if a.get("id", "").lower() != pkg_id.lower()
+                    ]
+                    if pkg_id not in app_state["updated_ids"]:
+                        app_state["updated_ids"].append(pkg_id)
             else:
-                add_log(f"Finalizado: {pkg_id} con código de retorno {ret}.", "warning")
+                add_log(f"Aviso: {pkg_id} finalizó con código {ret}. Consulta la terminal para ver el detalle.", "warning")
+                with state_lock:
+                    if pkg_id not in [f.get("id") for f in app_state["failed_ids"]]:
+                        app_state["failed_ids"].append({"id": pkg_id, "code": ret})
         except subprocess.TimeoutExpired:
             process.kill()
             add_log(f"Tiempo de espera agotado actualizando {pkg_id}.", "warning")
@@ -351,7 +363,9 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                     "current_action": app_state["current_action"],
                     "progress_percent": app_state["progress_percent"],
                     "updated_count": app_state["updated_count"],
-                    "total_to_update": app_state["total_to_update"]
+                    "total_to_update": app_state["total_to_update"],
+                    "updated_ids": list(app_state["updated_ids"]),
+                    "failed_ids": list(app_state["failed_ids"])
                 }
             self.send_json_response(data)
             return
