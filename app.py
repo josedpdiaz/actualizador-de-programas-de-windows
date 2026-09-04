@@ -44,6 +44,7 @@ app_state = {
     "updated_count": 0,
     "updated_ids": [],
     "failed_ids": [],
+    "uninstalled_ids": [],
 }
 
 state_lock = threading.Lock()
@@ -337,6 +338,67 @@ def upgrade_selected_thread(package_ids: list):
     scan_updates_thread()
 
 
+def uninstall_thread(pkg_id: str):
+    with state_lock:
+        app_state["is_updating"] = True
+        app_state["current_action"] = f"Desinstalando programa: {pkg_id}..."
+        app_state["progress_percent"] = 25
+
+    add_log(f"=== INICIANDO DESINSTALACIÓN OFICIAL DE: {pkg_id} ===", "info")
+    add_log("Aviso: Si el desinstalador o Windows (UAC) abre una ventana, confirma la desinstalación para proceder.", "info")
+
+    cmd = [
+        "winget", "uninstall",
+        "--id", pkg_id,
+        "--accept-source-agreements"
+    ]
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1
+        )
+        for raw_line in iter(process.stdout.readline, ''):
+            line = raw_line.strip()
+            if line:
+                add_log(f"[{pkg_id}] {line}", "process")
+        process.stdout.close()
+        ret = process.wait(timeout=300)
+
+        if ret == 0:
+            add_log(f"OK: {pkg_id} se ha desinstalado oficialmente con éxito.", "success")
+            with state_lock:
+                app_state["outdated_apps"] = [
+                    a for a in app_state["outdated_apps"]
+                    if a.get("id", "").lower() != pkg_id.lower()
+                ]
+                app_state["installed_apps"] = [
+                    a for a in app_state["installed_apps"]
+                    if a.get("id", "").lower() != pkg_id.lower()
+                ]
+                if pkg_id not in app_state["uninstalled_ids"]:
+                    app_state["uninstalled_ids"].append(pkg_id)
+        else:
+            add_log(f"Aviso: La desinstalación de {pkg_id} finalizó con código {ret}. Consulta la terminal si requirió interacción.", "warning")
+    except subprocess.TimeoutExpired:
+        process.kill()
+        add_log(f"Tiempo de espera agotado al desinstalar {pkg_id}.", "warning")
+    except Exception as e:
+        add_log(f"Error al desinstalar {pkg_id}: {str(e)}", "error")
+    finally:
+        with state_lock:
+            app_state["is_updating"] = False
+            app_state["progress_percent"] = 100
+            app_state["current_action"] = "Desinstalación concluida."
+        scan_updates_thread()
+        scan_all_installed_thread()
+
+
 class AppRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
@@ -371,7 +433,8 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                     "updated_count": app_state["updated_count"],
                     "total_to_update": app_state["total_to_update"],
                     "updated_ids": list(app_state["updated_ids"]),
-                    "failed_ids": list(app_state["failed_ids"])
+                    "failed_ids": list(app_state["failed_ids"]),
+                    "uninstalled_ids": list(app_state["uninstalled_ids"])
                 }
             self.send_json_response(data)
             return
@@ -444,6 +507,18 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 self.send_json_response({"status": "started", "count": len(package_ids)})
             else:
                 self.send_json_response({"status": "busy", "message": "Ya hay una actualización en curso"}, 409)
+            return
+
+        elif path == "/api/uninstall":
+            pkg_id = payload.get("id", "").strip()
+            if not pkg_id:
+                self.send_json_response({"status": "error", "message": "Identificador no válido"}, 400)
+                return
+            if not app_state["is_updating"]:
+                threading.Thread(target=uninstall_thread, args=(pkg_id,), daemon=True).start()
+                self.send_json_response({"status": "started", "message": f"Desinstalando {pkg_id}"})
+            else:
+                self.send_json_response({"status": "busy", "message": "Ya hay una operación en curso"}, 409)
             return
 
         self.send_response(404)

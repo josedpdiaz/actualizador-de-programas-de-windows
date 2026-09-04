@@ -5,6 +5,7 @@ let outdatedApps = [];
 let installedApps = [];
 let selectedAppIds = new Set();
 let knownUpdatedIds = new Set();
+let knownUninstalledIds = new Set();
 let lastLogIndex = 0;
 let pollTimer = null;
 let isUpdatingOrScanning = false;
@@ -180,6 +181,17 @@ async function checkStatus() {
       });
     }
 
+    // Procesar programas recién desinstalados en tiempo real
+    if (status.uninstalled_ids && status.uninstalled_ids.length > 0) {
+      status.uninstalled_ids.forEach(pkgId => {
+        const lowerId = pkgId.toLowerCase();
+        if (!knownUninstalledIds.has(lowerId)) {
+          knownUninstalledIds.add(lowerId);
+          animateAndRemoveUninstalledApp(pkgId);
+        }
+      });
+    }
+
     // Procesar programas que requieran atención
     if (status.failed_ids && status.failed_ids.length > 0) {
       status.failed_ids.forEach(f => {
@@ -292,6 +304,58 @@ function animateAndRemoveUpdatedApp(pkgId) {
     dom.tabBadgeOutdated.textContent = outdatedApps.length;
     updateSelectionUI();
   }
+}
+
+function animateAndRemoveUninstalledApp(pkgId) {
+  const lowerId = pkgId.toLowerCase();
+  
+  // 1. Quitar de la tabla de actualizaciones pendientes si está allí
+  const outdatedRows = dom.outdatedTableBody.querySelectorAll('tr[data-id]');
+  for (const r of outdatedRows) {
+    const id = r.getAttribute('data-id');
+    if (id && id.toLowerCase() === lowerId) {
+      r.classList.add('row-fading-out');
+      setTimeout(() => {
+        r.remove();
+        outdatedApps = outdatedApps.filter(a => a.id.toLowerCase() !== lowerId);
+        dom.statOutdated.textContent = outdatedApps.length;
+        dom.tabBadgeOutdated.textContent = outdatedApps.length;
+        dom.visibleCount.textContent = getFilteredOutdated().length;
+        updateSelectionUI();
+        if (outdatedApps.length === 0) renderOutdatedTable();
+      }, 400);
+      break;
+    }
+  }
+
+  // 2. Quitar de la tabla de todos los instalados si está allí
+  const installedRows = dom.installedTableBody.querySelectorAll('tr[data-installed-id]');
+  for (const r of installedRows) {
+    const id = r.getAttribute('data-installed-id');
+    if (id && id.toLowerCase() === lowerId) {
+      r.classList.add('row-fading-out');
+      setTimeout(() => {
+        r.remove();
+        installedApps = installedApps.filter(a => a.id.toLowerCase() !== lowerId);
+        dom.statInstalled.textContent = installedApps.length;
+        dom.tabBadgeInstalled.textContent = installedApps.length;
+        if (installedApps.length === 0) renderInstalledTable();
+      }, 400);
+      break;
+    }
+  }
+
+  // Quitar de selección
+  selectedAppIds.delete(pkgId);
+  outdatedApps = outdatedApps.filter(a => a.id.toLowerCase() !== lowerId);
+  installedApps = installedApps.filter(a => a.id.toLowerCase() !== lowerId);
+  dom.statOutdated.textContent = outdatedApps.length;
+  dom.tabBadgeOutdated.textContent = outdatedApps.length;
+  dom.statInstalled.textContent = installedApps.length;
+  dom.tabBadgeInstalled.textContent = installedApps.length;
+  updateSelectionUI();
+
+  showToast(`🗑️ "${pkgId}" se ha desinstalado oficialmente.`, "success");
 }
 
 async function loadOutdatedApps() {
@@ -442,9 +506,18 @@ function renderOutdatedTable() {
           <span class="source-badge">${escapeHtml(app.source || 'winget')}</span>
         </td>
         <td class="text-right">
-          <button class="btn-row-action btn-update-single" data-pkg-id="${escapeHtml(app.id)}" data-pkg-name="${escapeHtml(app.name)}">
-            Actualizar
-          </button>
+          <div class="actions-cell">
+            <button class="btn-row-action btn-update-single" data-pkg-id="${escapeHtml(app.id)}" data-pkg-name="${escapeHtml(app.name)}" title="Actualizar a la última versión">
+              Actualizar
+            </button>
+            <button class="btn-row-uninstall btn-uninstall-single" data-pkg-id="${escapeHtml(app.id)}" data-pkg-name="${escapeHtml(app.name)}" title="Desinstalar este programa">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+              <span>Quitar</span>
+            </button>
+          </div>
         </td>
       </tr>
     `;
@@ -465,12 +538,21 @@ function renderOutdatedTable() {
     });
   });
 
-  // Listeners a los botones individuales de actualización (sin inline onclick)
+  // Listeners a los botones individuales de actualización
   dom.outdatedTableBody.querySelectorAll('.btn-update-single').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const pkgId = btn.getAttribute('data-pkg-id');
       const pkgName = btn.getAttribute('data-pkg-name');
       executeUpgradeSingle(pkgId, pkgName, btn);
+    });
+  });
+
+  // Listeners a los botones individuales de desinstalación
+  dom.outdatedTableBody.querySelectorAll('.btn-uninstall-single').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const pkgId = btn.getAttribute('data-pkg-id');
+      const pkgName = btn.getAttribute('data-pkg-name');
+      executeUninstall(pkgId, pkgName);
     });
   });
 }
@@ -481,7 +563,7 @@ function renderInstalledTable() {
   if (filtered.length === 0) {
     dom.installedTableBody.innerHTML = `
       <tr>
-        <td colspan="5" class="empty-state">
+        <td colspan="6" class="empty-state">
           <p>No se encontraron aplicaciones instaladas.</p>
         </td>
       </tr>
@@ -492,7 +574,7 @@ function renderInstalledTable() {
   let html = '';
   filtered.forEach(app => {
     html += `
-      <tr>
+      <tr data-installed-id="${escapeHtml(app.id)}">
         <td>
           <div class="app-name-cell">
             <span class="app-title-text">${escapeHtml(app.name)}</span>
@@ -502,11 +584,29 @@ function renderInstalledTable() {
         <td><span class="version-badge version-current">${escapeHtml(app.version || '--')}</span></td>
         <td><span class="version-badge">${escapeHtml(app.available || '-')}</span></td>
         <td><span class="source-badge">${escapeHtml(app.source || 'winget')}</span></td>
+        <td class="text-right">
+          <button class="btn-row-uninstall btn-uninstall-single" data-pkg-id="${escapeHtml(app.id)}" data-pkg-name="${escapeHtml(app.name)}" title="Desinstalar este programa oficialmente">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Desinstalar</span>
+          </button>
+        </td>
       </tr>
     `;
   });
 
   dom.installedTableBody.innerHTML = html;
+
+  // Listeners a los botones de desinstalación de la lista completa
+  dom.installedTableBody.querySelectorAll('.btn-uninstall-single').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const pkgId = btn.getAttribute('data-pkg-id');
+      const pkgName = btn.getAttribute('data-pkg-name');
+      executeUninstall(pkgId, pkgName);
+    });
+  });
 }
 
 function updateSelectionUI() {
@@ -534,15 +634,32 @@ function updateSelectionUI() {
 }
 
 // Modal de Confirmación estilizado In-App
-function showConfirmModal(title, message, onConfirm) {
+function showConfirmModal(title, message, onConfirm, confirmText = "Continuar y Actualizar", isDanger = false) {
   const modal = document.getElementById('confirm-modal');
   const modalTitle = document.getElementById('modal-title');
   const modalMsg = document.getElementById('modal-message');
   const btnCancel = document.getElementById('modal-btn-cancel');
   const btnConfirm = document.getElementById('modal-btn-confirm');
+  const modalIconWrap = modal.querySelector('.modal-icon-wrap');
 
   modalTitle.textContent = title;
   modalMsg.textContent = message;
+  btnConfirm.textContent = confirmText;
+
+  if (isDanger) {
+    btnConfirm.className = 'btn btn-danger';
+    if (modalIconWrap) {
+      modalIconWrap.style.background = 'rgba(239, 68, 68, 0.15)';
+      modalIconWrap.style.color = '#ef4444';
+    }
+  } else {
+    btnConfirm.className = 'btn btn-primary';
+    if (modalIconWrap) {
+      modalIconWrap.style.background = 'rgba(99, 102, 241, 0.15)';
+      modalIconWrap.style.color = '#818cf8';
+    }
+  }
+
   modal.classList.remove('hidden');
 
   const cleanup = () => {
@@ -659,6 +776,38 @@ async function executeUpgradeSingle(id, name, buttonEl) {
       buttonEl.textContent = "Actualizar";
     }
   }
+}
+
+async function executeUninstall(pkgId, pkgName) {
+  if (isUpdatingOrScanning) {
+    showToast("Ya hay una tarea en curso. Por favor espera a que termine.", "warning");
+    return;
+  }
+
+  const displayName = pkgName || pkgId;
+  showConfirmModal(
+    `🗑️ ¿Desinstalar ${displayName}?`,
+    `Se ejecutará el desinstalador oficial de Windows para eliminar "${displayName}" (${pkgId}) por completo de tu equipo. Si Windows o el desinstalador abre una ventana de confirmación o permisos (UAC), acéptala para proceder.`,
+    async () => {
+      try {
+        showToast(`Iniciando desinstalación oficial de "${displayName}"...`, "info");
+        switchTab('logs');
+        const res = await fetch('/api/uninstall', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: pkgId })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.message || "No se pudo iniciar la desinstalación", "warning");
+        }
+      } catch (err) {
+        showToast("Error de conexión al solicitar desinstalación", "error");
+      }
+    },
+    "Sí, Desinstalar",
+    true // isDanger
+  );
 }
 
 // Polling de Estado y Logs

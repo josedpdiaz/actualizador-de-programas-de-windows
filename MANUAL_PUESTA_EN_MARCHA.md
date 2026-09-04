@@ -49,8 +49,15 @@ Al abrir la aplicación, verás el panel de control con fondo oscuro y efecto cr
 #### 🔹 Actualización de un Programa Individual
 - Al final de la fila de cada programa tienes un botón individual **`Actualizar`**. Al pulsarlo, sólo se procesará ese software específico.
 
-### Paso 3: Seguimiento en Tiempo Real
-- Haz clic en la pestaña **`Terminal en Vivo`** para ver en pantalla las descargas, porcentajes de progreso y mensajes de confirmación de cada instalador.
+### Paso 3: Desinstalación Oficial "Al Vuelo" (Novedad)
+Si detectas un programa que ya no usas, o que presenta un conflicto de versión instalada (como cuando hay versiones antiguas legacy):
+1. **Desde Actualizaciones Pendientes:** Cada fila cuenta con el botón rojo **`Quitar`**.
+2. **Desde Todos los Programas:** En la pestaña **`Todos los Programas`** dispones del botón **`Desinstalar`** en cada fila.
+3. Al pulsarlo, se abre una ventana de confirmación segura. Tras confirmar, el sistema ejecuta el **desinstalador oficial de Windows** a través del motor `winget`.
+4. El programa se desinstala limpiamente y desaparece automáticamente de las listas de tu panel sin necesidad de reiniciar la aplicación.
+
+### Paso 4: Seguimiento en Tiempo Real
+- Haz clic en la pestaña **`Terminal en Vivo`** para ver en pantalla las descargas, porcentajes de progreso y mensajes de confirmación de cada instalador o desinstalador.
 
 ---
 
