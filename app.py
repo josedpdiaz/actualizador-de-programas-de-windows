@@ -51,50 +51,45 @@ def add_log(message: str, level: str = "info"):
 
 def parse_winget_table(output_text: str):
     """
-    Parsea la salida tabular de winget basada en la línea separadora de guiones.
+    Parsea la salida tabular de winget de forma robusta e infalible.
     """
     lines = output_text.splitlines()
     sep_index = -1
     for i, line in enumerate(lines):
-        if line.startswith("---") or "---" in line:
+        if line.startswith("---") or (len(line) > 10 and set(line.strip()) == {"-"}):
             sep_index = i
             break
 
-    if sep_index == -1 or sep_index == 0:
+    if sep_index <= 0:
         return []
 
     header_line = lines[sep_index - 1]
-    sep_line = lines[sep_index]
-
-    col_starts = []
-    in_col = False
-    for i, char in enumerate(sep_line):
-        if char == "-" and not in_col:
-            col_starts.append(i)
-            in_col = True
-        elif char == " " and in_col:
-            in_col = False
+    id_pos = header_line.find("Id")
+    if id_pos == -1:
+        id_pos = 30
 
     items = []
     for line in lines[sep_index + 1:]:
-        if not line.strip() or line.startswith("-"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("-"):
             continue
-        if "actualizaciones disponibles" in line or "actualización disponible" in line or "paquete(s) tienen" in line:
+        if "actualizaciones disponibles" in line or "actualización disponible" in line or "paquete(s)" in line:
             break
 
-        cols = []
-        for c in range(len(col_starts)):
-            start = col_starts[c]
-            end = col_starts[c + 1] if c + 1 < len(col_starts) else len(line)
-            cols.append(line[start:end].strip() if start < len(line) else "")
+        name = line[:id_pos].strip()
+        rest = line[id_pos:].strip().split()
 
-        if len(cols) >= 4 and cols[0] and cols[1]:
+        if len(rest) >= 4:
+            pkg_id = rest[0]
+            source = rest[-1]
+            avail = rest[-2]
+            curr = " ".join(rest[1:-2])
             items.append({
-                "name": cols[0],
-                "id": cols[1],
-                "current_version": cols[2] if len(cols) > 2 else "",
-                "available_version": cols[3] if len(cols) > 3 else "",
-                "source": cols[4] if len(cols) > 4 else "winget",
+                "name": name if name else pkg_id,
+                "id": pkg_id,
+                "current_version": curr,
+                "available_version": avail,
+                "source": source,
                 "selected": True
             })
 
@@ -155,37 +150,34 @@ def scan_all_installed_thread():
         lines = stdout.splitlines()
         sep_index = -1
         for i, line in enumerate(lines):
-            if line.startswith("---") or "---" in line:
+            if line.startswith("---") or (len(line) > 10 and set(line.strip()) == {"-"}):
                 sep_index = i
                 break
                 
         all_apps = []
         if sep_index > 0:
-            sep_line = lines[sep_index]
-            col_starts = []
-            in_col = False
-            for i, char in enumerate(sep_line):
-                if char == "-" and not in_col:
-                    col_starts.append(i)
-                    in_col = True
-                elif char == " " and in_col:
-                    in_col = False
+            header_line = lines[sep_index - 1]
+            id_pos = header_line.find("Id")
+            if id_pos == -1:
+                id_pos = 30
                     
             for line in lines[sep_index + 1:]:
-                if not line.strip():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("-"):
                     continue
-                cols = []
-                for c in range(len(col_starts)):
-                    start = col_starts[c]
-                    end = col_starts[c + 1] if c + 1 < len(col_starts) else len(line)
-                    cols.append(line[start:end].strip() if start < len(line) else "")
-                if len(cols) >= 2 and cols[0] and cols[1]:
+                name = line[:id_pos].strip()
+                rest = line[id_pos:].strip().split()
+                if len(rest) >= 2:
+                    pkg_id = rest[0]
+                    source = rest[-1] if len(rest) >= 4 else ""
+                    avail = rest[-2] if len(rest) >= 4 else ""
+                    curr = " ".join(rest[1:-2]) if len(rest) >= 4 else (" ".join(rest[1:]) if len(rest) > 1 else "")
                     all_apps.append({
-                        "name": cols[0],
-                        "id": cols[1],
-                        "version": cols[2] if len(cols) > 2 else "",
-                        "available": cols[3] if len(cols) > 3 else "",
-                        "source": cols[4] if len(cols) > 4 else ""
+                        "name": name if name else pkg_id,
+                        "id": pkg_id,
+                        "version": curr,
+                        "available": avail,
+                        "source": source
                     })
                     
         with state_lock:
