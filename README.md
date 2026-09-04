@@ -4,6 +4,8 @@ Aplicación de escritorio moderna, ultraligera y eficiente para detectar todos l
 
 Desarrollada para ser **lo más sencilla, eficaz y rápida posible**, apoyándose directamente en el gestor oficial de Microsoft: **Windows Package Manager (`winget`)**.
 
+> 📖 **¿Primera vez usando la herramienta?** Consulta el [**Manual de Puesta en Marcha Rápida (Paso a Paso)**](MANUAL_PUESTA_EN_MARCHA.md).
+
 ---
 
 ## 🌟 Características Principales
