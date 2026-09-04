@@ -29,6 +29,7 @@ PORT = 5055
 HOST = "127.0.0.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
+APP_VERSION = "1.2.0"
 
 # Estado global de la aplicación
 app_state = {
@@ -406,13 +407,18 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
     def send_json_response(self, data, code=200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(body)
 
@@ -434,7 +440,8 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                     "total_to_update": app_state["total_to_update"],
                     "updated_ids": list(app_state["updated_ids"]),
                     "failed_ids": list(app_state["failed_ids"]),
-                    "uninstalled_ids": list(app_state["uninstalled_ids"])
+                    "uninstalled_ids": list(app_state["uninstalled_ids"]),
+                    "app_version": APP_VERSION
                 }
             self.send_json_response(data)
             return
@@ -525,13 +532,26 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
 
+class ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
+
+def free_port(port: int):
+    try:
+        cmd = f'powershell -NoProfile -Command "$conns = Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue; if ($conns) {{ foreach ($c in $conns) {{ Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }} }}"'
+        subprocess.run(cmd, shell=True, timeout=4)
+        time.sleep(0.3)
+    except Exception:
+        pass
+
+
 def is_port_available(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex((HOST, port)) != 0
 
 
 def open_desktop_window(url: str):
-    time.sleep(1.2)
+    time.sleep(1.0)
     edge_paths = [
         os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
         os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
@@ -539,7 +559,7 @@ def open_desktop_window(url: str):
     for edge in edge_paths:
         if os.path.isfile(edge):
             try:
-                subprocess.Popen([edge, f"--app={url}", "--window-size=1240,820"])
+                subprocess.Popen([edge, f"--app={url}", "--window-size=1260,840"])
                 return
             except Exception:
                 pass
@@ -548,15 +568,16 @@ def open_desktop_window(url: str):
 
 def main():
     global PORT
-    while not is_port_available(PORT) and PORT < 5100:
+    free_port(PORT)
+    while not is_port_available(PORT) and PORT < 5060:
         PORT += 1
 
     server_address = (HOST, PORT)
-    httpd = HTTPServer(server_address, AppRequestHandler)
+    httpd = ReusableHTTPServer(server_address, AppRequestHandler)
     app_url = f"http://{HOST}:{PORT}"
 
     print(f"============================================================")
-    print(f"  03-IA-ACTUALIZADOR-PROGRAMAS-WINDOWS")
+    print(f"  Actualizador de Programas de Windows (v{APP_VERSION})")
     print(f"  Servidor iniciado en: {app_url}")
     print(f"============================================================")
 

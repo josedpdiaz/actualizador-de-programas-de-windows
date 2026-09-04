@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=1.2.0">
 </head>
 <body>
   <div class="app-wrapper">
@@ -25,6 +25,7 @@
         <div class="header-title">
           <div class="title-row">
             <h1>Actualizador de Programas</h1>
+            <span class="badge-pill badge-version" id="app-version-badge">v1.2.0</span>
             <span class="badge-pill">Windows 11 / 10</span>
           </div>
           <p class="subtitle">Detección y actualización automática y silenciosa mediante Windows Package Manager (winget)</p>
@@ -263,9 +264,11 @@
     <!-- Footer -->
     <footer class="footer">
       <div class="footer-left">
-        <span>03-IA-ACTUALIZADOR-PROGRAMAS-WINDOWS</span>
+        <span>Actualizador de Programas de Windows</span>
         <span class="divider">•</span>
-        <span>Conectado a GitHub: <a href="https://github.com/josedpdiaz/03-ia-actualizador-programas-windows" target="_blank" class="github-link">josedpdiaz/03-ia-actualizador-programas-windows</a></span>
+        <span class="version-tag">v1.2.0</span>
+        <span class="divider">•</span>
+        <span>GitHub: <a href="https://github.com/josedpdiaz/actualizador-de-programas-de-windows" target="_blank" class="github-link">josedpdiaz/actualizador-de-programas-de-windows</a></span>
       </div>
       <div class="footer-right">
         <span>Eficaz, silencioso y seguro</span>
@@ -276,6 +279,6 @@
   <!-- Notificaciones Toast -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=1.2.0"></script>
 </body>
 </html>

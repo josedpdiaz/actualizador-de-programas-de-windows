@@ -138,6 +138,15 @@ body {
   border-radius: var(--radius-full);
 }
 
+.badge-version {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.35);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .subtitle {
   font-size: 0.88rem;
   color: var(--text-muted);
@@ -797,6 +806,17 @@ body {
 .github-link:hover {
   color: #a5b4fc;
   text-decoration: underline;
+}
+
+.version-tag {
+  color: #34d399;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.8rem;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 1px 7px;
+  border-radius: 4px;
 }
 
 .divider {

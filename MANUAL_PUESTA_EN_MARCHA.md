@@ -77,7 +77,8 @@ Si detectas un programa que ya no usas, o que presenta un conflicto de versión 
 ## 🌐 4. Repositorio y Control de Versiones en GitHub
 
 El proyecto está sincronizado con tu repositorio público en GitHub:
-- **URL del Repositorio:** [https://github.com/josedpdiaz/03-ia-actualizador-programas-windows](https://github.com/josedpdiaz/03-ia-actualizador-programas-windows)
+- **URL del Repositorio:** [https://github.com/josedpdiaz/actualizador-de-programas-de-windows](https://github.com/josedpdiaz/actualizador-de-programas-de-windows)
+- **Historial de Versiones:** Consulta el archivo [`HISTORIAL_VERSIONES.md`](HISTORIAL_VERSIONES.md) para ver la evolución y novedades de cada versión (v1.0.0, v1.1.0, v1.2.0).
 - **Para subir futuras mejoras:**
   ```powershell
   git add .
