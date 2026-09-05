@@ -810,10 +810,19 @@ async function executeUninstall(pkgId, pkgName) {
   );
 }
 
-// Polling de Estado y Logs
+// Polling de Estado y Logs (adaptativo)
+const POLL_FAST = 1200;   // ms cuando hay operación activa
+const POLL_IDLE = 2500;   // ms cuando el sistema está en reposo
+let currentPollInterval = POLL_IDLE;
+
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
+  schedulePoll();
+}
+
+function schedulePoll() {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = setTimeout(async () => {
     const status = await checkStatus();
     await fetchLogs();
 
@@ -822,7 +831,14 @@ function startPolling() {
         await loadOutdatedApps();
       }
     }
-  }, 1200);
+
+    // Ajustar velocidad según actividad
+    const newInterval = (status && (status.is_scanning || status.is_updating)) ? POLL_FAST : POLL_IDLE;
+    if (newInterval !== currentPollInterval) {
+      currentPollInterval = newInterval;
+    }
+    schedulePoll();
+  }, currentPollInterval);
 }
 
 // Toasts

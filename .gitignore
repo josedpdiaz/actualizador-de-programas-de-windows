@@ -9,3 +9,5 @@ venv/
 *.log
 .vscode/
 .idea/
+*.lock
+*.tmp

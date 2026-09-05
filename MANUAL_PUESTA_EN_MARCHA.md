@@ -9,19 +9,18 @@ Este manual te explica de forma rápida, sencilla y directa cómo iniciar y util
 
 Tienes tres formas cómodas de abrir la aplicación:
 
-### ⭐ Opción A: Desde el Acceso Directo del Escritorio (La más rápida)
+### ⭐ Opción A: Desde el Acceso Directo del Escritorio (Recomendada)
 1. Ve a tu **Escritorio** de Windows.
 2. Haz doble clic sobre el icono **`Actualizador de Programas`**.
-3. La aplicación se abrirá directamente en su propia ventana de escritorio (sin consolas negras molestas).
+3. Ejecuta la aplicación instalada en el disco duro (`%LOCALAPPDATA%\Programs\ActualizadorProgramasWindows`) de forma silenciosa y en su propia ventana sin consolas negras.
 
-### Opción B: Inicio Silencioso desde la Carpeta
-1. Abre la carpeta del proyecto:
-   `c:\Users\josed\Desktop\9-P-SEP.26\03-IA-ACTUALIZADOR-PROGRAMAS-WINDOWS`
-2. Haz doble clic sobre el archivo **`iniciar-silencioso.vbs`**.
+### Opción B: Acceso Directo con Consola (Escritorio)
+- Si deseas ver los mensajes y la terminal de `iniciar.bat`, haz doble clic sobre el icono **`Actualizador de Programas (Consola)`** en el Escritorio.
 
-### Opción C: Inicio con Consola de Registro
-Si en algún momento quieres ver la consola tradicional de fondo mientras pruebas la aplicación:
-1. Haz doble clic sobre **`iniciar.bat`**.
+### Opción C: Carpeta de Respaldo / Copia de Seguridad
+- La carpeta en el Escritorio (`c:\Users\josed\Desktop\9-P-SEP.26\03-IA-ACTUALIZADOR-PROGRAMAS-WINDOWS`) queda como tu copia de seguridad intacta.
+- La versión activa en producción se encuentra alojada en:
+  `C:\Users\josed\AppData\Local\Programs\ActualizadorProgramasWindows`
 
 ---
 

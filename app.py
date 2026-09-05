@@ -30,7 +30,7 @@ PORT = 5055
 HOST = "127.0.0.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 
 # Estado global de la aplicación
 app_state = {
@@ -340,20 +340,49 @@ def upgrade_selected_thread(package_ids: list):
     scan_updates_thread()
 
 
-def uninstall_thread(pkg_id: str):
-    with state_lock:
-        app_state["is_updating"] = True
-        app_state["current_action"] = f"Desinstalando programa: {pkg_id}..."
-        app_state["progress_percent"] = 25
-
-    add_log(f"=== INICIANDO DESINSTALACIÓN OFICIAL DE: {pkg_id} ===", "info")
-    add_log("Aviso: Si el desinstalador o Windows (UAC) abre una ventana, confirma la desinstalación para proceder.", "info")
-
-    cmd = [
-        "winget", "uninstall",
-        "--id", pkg_id,
-        "--accept-source-agreements"
+def _find_registry_uninstall_string(pkg_id: str, pkg_name: str = "") -> str:
+    """Busca el UninstallString en el Registro de Windows para un paquete dado."""
+    import winreg
+    search_terms = [t.lower() for t in [pkg_id, pkg_name] if t]
+    reg_paths = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
     ]
+    for hive, base_path in reg_paths:
+        try:
+            with winreg.OpenKey(hive, base_path) as key:
+                for i in range(winreg.QueryInfoKey(key)[0]):
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, subkey_name) as subkey:
+                            try:
+                                display_name = winreg.QueryValueEx(subkey, "DisplayName")[0]
+                            except FileNotFoundError:
+                                continue
+                            display_lower = display_name.lower()
+                            matched = any(term in display_lower or display_lower in term for term in search_terms if term)
+                            if not matched and pkg_id:
+                                matched = subkey_name.lower() == pkg_id.lower()
+                            if matched:
+                                try:
+                                    return winreg.QueryValueEx(subkey, "UninstallString")[0]
+                                except FileNotFoundError:
+                                    pass
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return ""
+
+
+def _run_uninstall_cmd(cmd: list, pkg_id: str, timeout: int = 60) -> tuple:
+    """Ejecuta un comando de desinstalación y retorna (código_retorno, fue_no_encontrado, salida).
+    Incluye un watchdog que mata el proceso si se queda sin producir salida por más de 45 segundos."""
+    output_lines = []
+    not_found = False
+    last_activity = [time.time()]
+    STALL_TIMEOUT = 45  # segundos sin actividad antes de matar
 
     try:
         process = subprocess.Popen(
@@ -365,40 +394,213 @@ def uninstall_thread(pkg_id: str):
             errors="replace",
             bufsize=1
         )
+
+        # Watchdog: si el proceso no produce salida en STALL_TIMEOUT segundos, lo mata
+        def watchdog():
+            while process.poll() is None:
+                elapsed = time.time() - last_activity[0]
+                if elapsed > STALL_TIMEOUT:
+                    add_log(f"⏱️ El proceso lleva {int(elapsed)}s sin responder. Terminando automáticamente...", "warning")
+                    try:
+                        # Matar el proceso y todos sus hijos
+                        subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                            capture_output=True, timeout=5
+                        )
+                    except Exception:
+                        try:
+                            process.kill()
+                        except Exception:
+                            pass
+                    return
+                time.sleep(3)
+
+        watchdog_thread = threading.Thread(target=watchdog, daemon=True)
+        watchdog_thread.start()
+
         for raw_line in iter(process.stdout.readline, ''):
             line = raw_line.strip()
             if line:
+                last_activity[0] = time.time()
                 add_log(f"[{pkg_id}] {line}", "process")
+                output_lines.append(line)
+                lower_line = line.lower()
+                if "no se encontr" in lower_line or "no package found" in lower_line:
+                    not_found = True
         process.stdout.close()
-        ret = process.wait(timeout=300)
-
-        if ret == 0:
-            add_log(f"OK: {pkg_id} se ha desinstalado oficialmente con éxito.", "success")
-            with state_lock:
-                app_state["outdated_apps"] = [
-                    a for a in app_state["outdated_apps"]
-                    if a.get("id", "").lower() != pkg_id.lower()
-                ]
-                app_state["installed_apps"] = [
-                    a for a in app_state["installed_apps"]
-                    if a.get("id", "").lower() != pkg_id.lower()
-                ]
-                if pkg_id not in app_state["uninstalled_ids"]:
-                    app_state["uninstalled_ids"].append(pkg_id)
-        else:
-            add_log(f"Aviso: La desinstalación de {pkg_id} finalizó con código {ret}. Consulta la terminal si requirió interacción.", "warning")
+        ret = process.wait(timeout=timeout)
+        return ret, not_found, output_lines
     except subprocess.TimeoutExpired:
-        process.kill()
-        add_log(f"Tiempo de espera agotado al desinstalar {pkg_id}.", "warning")
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, timeout=5)
+        except Exception:
+            process.kill()
+        add_log(f"Tiempo de espera agotado ({timeout}s) ejecutando comando para {pkg_id}.", "warning")
+        return -1, False, output_lines
     except Exception as e:
-        add_log(f"Error al desinstalar {pkg_id}: {str(e)}", "error")
-    finally:
+        add_log(f"Error ejecutando comando para {pkg_id}: {str(e)}", "error")
+        return -99, False, output_lines
+
+
+def uninstall_thread(pkg_id: str):
+    with state_lock:
+        app_state["is_updating"] = True
+        app_state["current_action"] = f"Desinstalando programa: {pkg_id}..."
+        app_state["progress_percent"] = 10
+
+    # Buscar el nombre legible del programa en las listas internas
+    pkg_name = ""
+    with state_lock:
+        for a in app_state["outdated_apps"] + app_state["installed_apps"]:
+            if a.get("id", "").lower() == pkg_id.lower():
+                pkg_name = a.get("name", "")
+                break
+
+    add_log(f"=== INICIANDO DESINSTALACIÓN DE: {pkg_name or pkg_id} ({pkg_id}) ===", "info")
+    add_log("Aviso: Si el desinstalador o Windows (UAC) abre una ventana, confirma la desinstalación para proceder.", "info")
+
+    success = False
+
+    # ── INTENTO 1: winget uninstall --id (método estándar) ──
+    add_log(f"[Intento 1/4] Desinstalando por ID con winget...", "info")
+    with state_lock:
+        app_state["progress_percent"] = 20
+    cmd1 = ["winget", "uninstall", "--id", pkg_id, "--accept-source-agreements"]
+    ret1, not_found1, _ = _run_uninstall_cmd(cmd1, pkg_id)
+
+    if ret1 == 0:
+        add_log(f"✅ Desinstalación exitosa por ID (método estándar).", "success")
+        success = True
+
+    # ── INTENTO 2: winget uninstall --name (fallback por nombre) ──
+    uninstaller_broken = False  # Si el desinstalador del fabricante está roto/colgado
+    if not success and (not_found1 or ret1 != 0) and pkg_name:
+        add_log(f"[Intento 2/4] El ID no fue reconocido. Reintentando por nombre: \"{pkg_name}\"...", "info")
         with state_lock:
-            app_state["is_updating"] = False
-            app_state["progress_percent"] = 100
-            app_state["current_action"] = "Desinstalación concluida."
-        scan_updates_thread()
-        scan_all_installed_thread()
+            app_state["progress_percent"] = 40
+        cmd2 = ["winget", "uninstall", "--name", pkg_name, "--accept-source-agreements"]
+        ret2, not_found2, _ = _run_uninstall_cmd(cmd2, pkg_id)
+
+        if ret2 == 0:
+            add_log(f"✅ Desinstalación exitosa por nombre.", "success")
+            success = True
+        elif ret2 == 50 or ret2 == -1:
+            # Código 50 = desinstalador roto/no soporta silent. -1 = watchdog lo mató por colgarse.
+            # No tiene sentido reintentar con --interactive: es el MISMO desinstalador y se colgará igual.
+            uninstaller_broken = True
+            add_log(f"⚠️ El desinstalador del fabricante no responde o no es compatible (código {ret2}). Saltando al método directo del Registro...", "warning")
+        elif not_found2:
+            add_log(f"Winget no pudo localizar el paquete por nombre tampoco.", "warning")
+
+    # ── INTENTO 3: winget sin modo silencioso (interactivo) ──
+    # SOLO se ejecuta si el desinstalador NO fue marcado como roto (evita repetir cuelgue)
+    if not success and not uninstaller_broken:
+        add_log(f"[Intento 3/4] Ejecutando desinstalador en modo interactivo (sin --silent)...", "info")
+        add_log("📢 Si aparece una ventana del desinstalador o de permisos (UAC), acéptala para continuar.", "warning")
+        with state_lock:
+            app_state["progress_percent"] = 60
+
+        # Intentar primero por nombre (más fiable según diagnóstico), luego por ID
+        if pkg_name:
+            cmd3 = ["winget", "uninstall", "--name", pkg_name, "--accept-source-agreements", "--interactive"]
+        else:
+            cmd3 = ["winget", "uninstall", "--id", pkg_id, "--accept-source-agreements", "--interactive"]
+        ret3, _, _ = _run_uninstall_cmd(cmd3, pkg_id, timeout=90)
+
+        if ret3 == 0:
+            add_log(f"✅ Desinstalación exitosa en modo interactivo.", "success")
+            success = True
+    elif not success and uninstaller_broken:
+        add_log(f"[Intento 3/4] Omitido — el desinstalador del fabricante está defectuoso. Pasando al Registro...", "info")
+
+    # ── INTENTO 4: Ejecutar UninstallString directamente del Registro ──
+    if not success:
+        add_log(f"[Intento 4/4] Último recurso: buscando desinstalador en el Registro de Windows...", "info")
+        with state_lock:
+            app_state["progress_percent"] = 80
+
+        uninstall_str = _find_registry_uninstall_string(pkg_id, pkg_name)
+        if uninstall_str and not uninstaller_broken:
+            add_log(f"Encontrado en el Registro: {uninstall_str}", "info")
+            add_log("📢 Ejecutando desinstalador nativo. Si aparece una ventana, acéptala.", "warning")
+            try:
+                last_activity = [time.time()]
+                STALL_TIMEOUT = 45
+                process = subprocess.Popen(
+                    uninstall_str,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1
+                )
+
+                def watchdog_reg():
+                    while process.poll() is None:
+                        if time.time() - last_activity[0] > STALL_TIMEOUT:
+                            add_log(f"⏱️ Desinstalador nativo sin respuesta por {STALL_TIMEOUT}s. Terminando...", "warning")
+                            try:
+                                subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, timeout=5)
+                            except Exception:
+                                process.kill()
+                            return
+                        time.sleep(3)
+
+                threading.Thread(target=watchdog_reg, daemon=True).start()
+
+                for raw_line in iter(process.stdout.readline, ''):
+                    line = raw_line.strip()
+                    if line:
+                        last_activity[0] = time.time()
+                        add_log(f"[Registro] {line}", "process")
+                process.stdout.close()
+                ret4 = process.wait(timeout=90)
+
+                if ret4 == 0:
+                    add_log(f"✅ Desinstalación exitosa mediante desinstalador nativo del Registro.", "success")
+                    success = True
+                else:
+                    add_log(f"El desinstalador nativo finalizó con código {ret4}.", "warning")
+            except subprocess.TimeoutExpired:
+                try:
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, timeout=5)
+                except Exception:
+                    process.kill()
+                add_log(f"Tiempo de espera agotado (90s) con el desinstalador nativo.", "warning")
+            except Exception as e:
+                add_log(f"Error ejecutando desinstalador nativo: {str(e)}", "error")
+        elif uninstall_str and uninstaller_broken:
+            add_log(f"El desinstalador registrado es el mismo que ya falló: {uninstall_str}", "warning")
+            add_log(f"❌ Este programa tiene un desinstalador defectuoso que no funciona en modo automático.", "error")
+        else:
+            add_log(f"No se encontró entrada de desinstalación en el Registro de Windows para este programa.", "warning")
+
+    # ── RESULTADO FINAL ──
+    if success:
+        add_log(f"🎉 {pkg_name or pkg_id} se ha desinstalado oficialmente con éxito.", "success")
+        with state_lock:
+            app_state["outdated_apps"] = [
+                a for a in app_state["outdated_apps"]
+                if a.get("id", "").lower() != pkg_id.lower()
+            ]
+            app_state["installed_apps"] = [
+                a for a in app_state["installed_apps"]
+                if a.get("id", "").lower() != pkg_id.lower()
+            ]
+            if pkg_id not in app_state["uninstalled_ids"]:
+                app_state["uninstalled_ids"].append(pkg_id)
+    else:
+        add_log(f"❌ No se pudo completar la desinstalación de {pkg_name or pkg_id} tras agotar todos los métodos disponibles.", "error")
+        add_log("💡 Sugerencia: Intenta desinstalar manualmente desde Configuración de Windows > Aplicaciones > Aplicaciones instaladas.", "info")
+
+    with state_lock:
+        app_state["is_updating"] = False
+        app_state["progress_percent"] = 100
+        app_state["current_action"] = "Desinstalación concluida."
+    scan_updates_thread()
+    scan_all_installed_thread()
 
 
 class AppRequestHandler(SimpleHTTPRequestHandler):

@@ -6,6 +6,30 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/
 
 ---
 
+## 🚀 [v1.3.0] — 05/09/2026
+### ✨ Novedades
+- **Desinstalación Robusta con Fallbacks Escalonados (4 niveles):**
+  - **Nivel 1:** Desinstalación estándar por ID con `winget uninstall --id`.
+  - **Nivel 2:** Si el ID no es reconocido (bug conocido de winget con bundles), se reintenta automáticamente por nombre con `winget uninstall --name`.
+  - **Nivel 3:** Si el desinstalador requiere interacción visual (código 50), se reintenta en modo `--interactive` para permitir que el usuario acepte la ventana del desinstalador.
+  - **Nivel 4 (último recurso):** Se busca el `UninstallString` directamente en el Registro de Windows y se ejecuta el desinstalador nativo del fabricante.
+  - Resuelve la desinstalación de programas como `OpenMedia.4KVideoDownloaderPlus` que fallaban con el método estándar.
+- **Logging Detallado de Desinstalación:**
+  - Cada intento se identifica como `[Intento X/4]` en la terminal en vivo.
+  - Mensajes claros de éxito/fallo con emojis y sugerencias de intervención manual cuando se agotan todos los métodos.
+
+### ⚡ Mejoras de Rendimiento
+- **Polling Adaptativo del Frontend:**
+  - Intervalo de consulta reducido a 2.5 segundos cuando el sistema está en reposo (antes: 1.2s constante).
+  - Se mantiene 1.2 segundos durante operaciones activas (escaneo/actualización) para feedback instantáneo.
+  - Reduce las peticiones HTTP al servidor en ~50% durante el uso normal.
+
+### 🐛 Correcciones
+- **Resolución del bug de matcheo de ID en winget:** Paquetes instalados como bundle (ej. WiX/Burn) que winget no podía localizar por `--id` pero sí por `--name`, ahora se resuelven automáticamente.
+- **Desinstaladores que requieren modo interactivo:** Ya no se reportan como fallos silenciosos. Se reintenta en modo interactivo y se guía al usuario con mensajes claros.
+
+---
+
 ## 🚀 [v1.2.1] — 05/09/2026
 ### 🎨 Mejoras de Interfaz (UI/UX) y Visibilidad
 - **Visibilidad Completa del Botón Rojo `Quitar`:**
