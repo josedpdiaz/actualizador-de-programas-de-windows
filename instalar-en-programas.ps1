@@ -17,10 +17,24 @@ if (-not (Test-Path $targetDir)) {
     New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
 }
 
-# 2. Copiar archivos excluyendo .git, cache y temporales
-$excludeList = @('.git', '__pycache__', '*.lock', '*.tmp')
-Get-ChildItem -Path $sourceDir -Exclude $excludeList | ForEach-Object {
+# 2. Copiar archivos del proyecto
+$excludeList = @('__pycache__', '*.lock', '*.tmp')
+Get-ChildItem -Path $sourceDir -Exclude $excludeList -Force | ForEach-Object {
     Copy-Item -Path $_.FullName -Destination $targetDir -Recurse -Force
+}
+
+# 2.1 Migrar el bundle de historial Git y el script de backup si existen en la carpeta padre
+$parentDir = Split-Path -Parent $sourceDir
+$bundlePath = Join-Path $parentDir "03-IA-ACTUALIZADOR-PROGRAMAS-WINDOWS-GIT-HISTORY.bundle"
+$backupScriptPath = Join-Path $parentDir "backup-03-git-history.ps1"
+
+if (Test-Path $bundlePath) {
+    Copy-Item -Path $bundlePath -Destination $targetDir -Force
+    Write-Host "[OK] Bundle de historial Git migrado a la carpeta de Programas." -ForegroundColor Green
+}
+if (Test-Path $backupScriptPath) {
+    Copy-Item -Path $backupScriptPath -Destination $targetDir -Force
+    Write-Host "[OK] Script de backup Git migrado a la carpeta de Programas." -ForegroundColor Green
 }
 
 # 3. Verificar que los archivos clave se copiaron correctamente
