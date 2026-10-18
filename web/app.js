@@ -226,12 +226,13 @@ async function checkStatus() {
       icon.classList.toggle('spinning', status.is_scanning);
     }
     dom.btnScan.disabled = isUpdatingOrScanning;
-    dom.btnUpgradeAll.disabled = status.is_updating || status.outdated_count === 0;
+    dom.btnUpgradeAll.disabled = isUpdatingOrScanning || status.update_blocked || status.outdated_count === 0;
 
     // Barra de Progreso
-    if (status.is_updating) {
+    if (status.is_updating || status.last_result) {
       dom.progressContainer.classList.remove('hidden');
-      dom.progressText.textContent = status.current_action;
+      dom.progressText.textContent = (!status.is_updating && !status.is_scanning && status.last_result) ? status.last_result.summary : status.current_action;
+      dom.progressContainer.setAttribute("aria-live", "polite");
       dom.progressPercent.textContent = `${status.progress_percent}%`;
       dom.progressBarFill.style.width = `${status.progress_percent}%`;
     } else {
@@ -694,7 +695,7 @@ async function triggerScan() {
 function triggerUpgradeAll() {
   showConfirmModal(
     "⚡ ¿Actualizar Todos los Programas?",
-    `Se van a descargar e instalar en segundo plano las actualizaciones de los ${outdatedApps.length} programas pendientes.`,
+    `Se actualizarán uno a uno los ${outdatedApps.length} programas de esta lista. Windows puede solicitar permisos. No se reiniciará el equipo automáticamente.`,
     async () => {
       try {
         showToast("Iniciando actualización automática global...", "info");
@@ -814,6 +815,7 @@ async function executeUninstall(pkgId, pkgName) {
 const POLL_FAST = 1200;   // ms cuando hay operación activa
 const POLL_IDLE = 2500;   // ms cuando el sistema está en reposo
 let currentPollInterval = POLL_IDLE;
+let lastOperationId = -1;
 
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
@@ -826,9 +828,10 @@ function schedulePoll() {
     const status = await checkStatus();
     await fetchLogs();
 
-    if (status && status.outdated_count !== outdatedApps.length) {
-      if (!status.is_updating) {
+    if (status && (status.outdated_count !== outdatedApps.length || status.operation_id !== lastOperationId)) {
+      if (!status.is_updating && !status.is_scanning) {
         await loadOutdatedApps();
+        lastOperationId = status.operation_id;
       }
     }
 

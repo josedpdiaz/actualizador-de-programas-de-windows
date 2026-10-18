@@ -12,6 +12,7 @@ import json
 import time
 import socket
 import threading
+from update_engine import OperationGate, run_command, upgrade_command, validate_ids, result_kind
 import subprocess
 import webbrowser
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -30,7 +31,7 @@ PORT = 5055
 HOST = "127.0.0.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 # Estado global de la aplicación
 app_state = {
@@ -40,6 +41,9 @@ app_state = {
     "outdated_apps": [],
     "installed_apps": [],
     "logs": [],
+    "last_result": None,
+    "update_blocked": False,
+    "operation_id": 0,
     "current_action": "Listo",
     "progress_percent": 0,
     "total_to_update": 0,
@@ -50,6 +54,7 @@ app_state = {
 }
 
 state_lock = threading.Lock()
+operation_gate = OperationGate()
 
 
 def add_log(message: str, level: str = "info"):
@@ -118,22 +123,17 @@ def parse_winget_table(output_text: str):
 
 def scan_updates_thread():
     with state_lock:
-        app_state["is_scanning"] = True
         app_state["current_action"] = "Buscando actualizaciones de programas..."
     
     add_log("Iniciando escaneo de programas con Windows Package Manager (winget)...", "info")
     
     try:
-        cmd = ["winget", "upgrade", "--include-unknown", "--accept-source-agreements"]
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace"
-        )
-        stdout, _ = process.communicate()
+        cmd = ["winget", "upgrade", "--disable-interactivity", "--accept-source-agreements"]
+        lines = []
+        result = run_command(cmd, lines.append, timeout=120)
+        if result.timed_out or result_kind(result.code) not in ("success", "no_update"):
+            raise RuntimeError("El escaneo no terminó correctamente. Se conserva la lista anterior.")
+        stdout = "\n".join(lines)
         
         apps = parse_winget_table(stdout)
         
@@ -148,24 +148,17 @@ def scan_updates_thread():
         add_log(f"Error durante el escaneo: {str(e)}", "error")
         with state_lock:
             app_state["current_action"] = "Error al escanear"
-    finally:
-        with state_lock:
-            app_state["is_scanning"] = False
 
 
 def scan_all_installed_thread():
     add_log("Listando todos los programas instalados en el sistema...", "info")
     try:
-        cmd = ["winget", "list", "--accept-source-agreements"]
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace"
-        )
-        stdout, _ = process.communicate()
+        cmd = ["winget", "list", "--disable-interactivity", "--accept-source-agreements"]
+        lines = []
+        result = run_command(cmd, lines.append, timeout=120)
+        if result.timed_out or result_kind(result.code) not in ("success", "no_update"):
+            raise RuntimeError("El escaneo no terminó correctamente. Se conserva la lista anterior.")
+        stdout = "\n".join(lines)
         
         lines = stdout.splitlines()
         sep_index = -1
@@ -207,137 +200,103 @@ def scan_all_installed_thread():
         add_log(f"Error listando programas instalados: {str(e)}", "error")
 
 
+def start_operation(target, args=(), scanning=False, preflight=None):
+    """Reserve before starting the worker; concurrent requests cannot enter."""
+    if not operation_gate.acquire():
+        return False
+    try:
+        if preflight:
+            preflight()
+    except Exception:
+        operation_gate.release()
+        raise
+    with state_lock:
+        app_state["is_scanning" if scanning else "is_updating"] = True
+        app_state["operation_id"] += 1
+    def worker():
+        try:
+            target(*args)
+        except Exception as exc:
+            add_log(f"La operación no pudo finalizar: {exc}", "error")
+            with state_lock:
+                app_state["current_action"] = "Operación interrumpida. Consulta el registro."
+        finally:
+            with state_lock:
+                app_state["is_scanning"] = False
+                app_state["is_updating"] = False
+            operation_gate.release()
+    try:
+        threading.Thread(target=worker, daemon=True).start()
+    except Exception:
+        with state_lock:
+            app_state["is_scanning"] = False
+            app_state["is_updating"] = False
+        operation_gate.release()
+        raise
+    return True
+
+
 def upgrade_all_thread():
     with state_lock:
-        app_state["is_updating"] = True
-        app_state["current_action"] = "Actualizando todos los programas automáticamente..."
-        app_state["progress_percent"] = 5
-        
-    add_log("=== INICIANDO ACTUALIZACIÓN AUTOMÁTICA DE TODOS LOS PROGRAMAS ===", "info")
-    add_log("Ejecutando: winget upgrade --all --silent --include-unknown --accept-package-agreements --accept-source-agreements", "info")
-    
-    try:
-        cmd = [
-            "winget", "upgrade", "--all",
-            "--include-unknown",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-            "--silent"
-        ]
-        
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1
-        )
-        
-        for raw_line in iter(process.stdout.readline, ''):
-            line = raw_line.strip()
-            if line:
-                add_log(line, "process")
-                
-        process.stdout.close()
-        return_code = process.wait()
-        
-        if return_code == 0:
-            add_log("¡Todas las actualizaciones procesadas correctamente!", "success")
-        else:
-            add_log(f"Proceso finalizado con código: {return_code}.", "warning")
-            
-        scan_updates_thread()
-        
-    except Exception as e:
-        add_log(f"Error en la actualización automática: {str(e)}", "error")
-    finally:
-        with state_lock:
-            app_state["is_updating"] = False
-            app_state["progress_percent"] = 100
-            app_state["current_action"] = "Actualización concluida."
+        ids = [item["id"] for item in app_state["outdated_apps"]]
+    upgrade_selected_thread(ids)
 
 
-def upgrade_selected_thread(package_ids: list):
+def upgrade_selected_thread(package_ids):
     total = len(package_ids)
+    results = []
     with state_lock:
-        app_state["is_updating"] = True
-        app_state["total_to_update"] = total
-        app_state["updated_count"] = 0
-        app_state["progress_percent"] = 0
-        app_state["current_action"] = f"Actualizando {total} programas seleccionados..."
-        
-    add_log(f"Iniciando actualización selectiva de {total} programas...", "info")
-    add_log("Aviso: Si el programa requiere permisos de Administrador, acepta la ventana de confirmación de Windows (UAC).", "info")
-    
+        app_state.update(is_updating=True, total_to_update=total, updated_count=0,
+                         progress_percent=0, updated_ids=[], failed_ids=[], last_result=None)
+    add_log("Se actualizarán los programas de la lista, uno a uno. Windows puede solicitar permisos de administrador.")
     for index, pkg_id in enumerate(package_ids):
         with state_lock:
-            app_state["updated_count"] = index
-            app_state["progress_percent"] = int((index / total) * 100)
-            app_state["current_action"] = f"Actualizando [{index + 1}/{total}]: {pkg_id}"
-            
-        add_log(f"[{index + 1}/{total}] Actualizando: {pkg_id} ...", "info")
-        
-        cmd = [
-            "winget", "upgrade",
-            "--id", pkg_id,
-            "--include-unknown",
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-            "--silent"
-        ]
-        
+            app_state["current_action"] = f"Preparando [{index + 1}/{total}]: {pkg_id}"
+        def tick(seconds):
+            with state_lock:
+                app_state["current_action"] = f"[{index + 1}/{total}] {pkg_id} · {seconds}s. Descargando o instalando; comprueba si Windows solicita permiso."
         try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1
-            )
-            has_tech_conflict = False
-            for raw_line in iter(process.stdout.readline, ''):
-                line = raw_line.strip()
-                if line:
-                    add_log(f"[{pkg_id}] {line}", "process")
-                    if "tecnología de instalación es diferente" in line.lower():
-                        has_tech_conflict = True
-            process.stdout.close()
-            ret = process.wait(timeout=300)
-            if ret == 0:
-                add_log(f"OK: {pkg_id} actualizado exitosamente.", "success")
-                with state_lock:
-                    app_state["outdated_apps"] = [
-                        a for a in app_state["outdated_apps"]
-                        if a.get("id", "").lower() != pkg_id.lower()
-                    ]
-                    if pkg_id not in app_state["updated_ids"]:
-                        app_state["updated_ids"].append(pkg_id)
-            else:
-                if has_tech_conflict:
-                    add_log(f"ℹ️ {pkg_id}: Existen versiones anteriores con tecnologías de instalación distintas instaladas en este equipo (ej. EXE vs MSI). Winget requiere desinstalar la versión antigua desde Configuración de Windows > Aplicaciones para poder instalar la nueva.", "warning")
-                else:
-                    add_log(f"Aviso: {pkg_id} finalizó con código {ret}. Consulta la terminal para ver el detalle.", "warning")
-                with state_lock:
-                    if pkg_id not in [f.get("id") for f in app_state["failed_ids"]]:
-                        app_state["failed_ids"].append({"id": pkg_id, "code": ret, "reason": "conflict" if has_tech_conflict else "other"})
-        except subprocess.TimeoutExpired:
-            process.kill()
-            add_log(f"Tiempo de espera agotado actualizando {pkg_id}.", "warning")
-        except Exception as e:
-            add_log(f"Error al actualizar {pkg_id}: {str(e)}", "error")
-            
+            result = run_command(upgrade_command(pkg_id),
+                                 lambda line: add_log(f"[{pkg_id}] {line}", "process"),
+                                 timeout=1800, on_tick=tick)
+            kind = "timeout" if result.timed_out else result_kind(result.code)
+            entry = {"id": pkg_id, "status": kind, "code": result.code}
+        except Exception as exc:
+            entry = {"id": pkg_id, "status": "failed", "code": None, "reason": str(exc)}
+            kind = "failed"
+        results.append(entry)
+        with state_lock:
+            app_state["updated_count"] = index + 1
+            app_state["progress_percent"] = int((index + 1) / total * 100)
+            if kind == "success":
+                app_state["updated_ids"].append(pkg_id)
+                app_state["outdated_apps"] = [a for a in app_state["outdated_apps"] if a["id"] != pkg_id]
+            elif kind not in ("no_update",):
+                app_state["failed_ids"].append({**entry, "reason": kind})
+        messages = {
+            "success": "Actualizado según el resultado del instalador.",
+            "no_update": "WinGet no encuentra una actualización aplicable; se omite.",
+            "restart": "Necesita reiniciar para completar la instalación. Cola detenida.",
+            "restart_before": "Necesita reiniciar antes de instalar. Cola detenida.",
+            "timeout": "Superados 30 minutos. Cola detenida; el instalador podría seguir abierto. Revísalo antes de volver a actualizar.",
+            "failed": "No se pudo actualizar. Consulta el resultado del instalador en el registro."
+        }
+        add_log(f"{pkg_id}: {messages[kind]}", "success" if kind == "success" else "warning")
+        if kind in ("timeout", "restart", "restart_before"):
+            with state_lock:
+                app_state["update_blocked"] = True
+            results.extend({"id": pending, "status": "pending", "code": None} for pending in package_ids[index + 1:])
+            break
+    counts = {key: sum(r["status"] == key for r in results) for key in
+              ("success", "no_update", "failed", "timeout", "restart", "restart_before", "pending")}
+    summary = (f"Resultado: {counts['success']} actualizados, {counts['no_update']} sin actualización aplicable, "
+               f"{counts['failed'] + counts['timeout']} fallidos, "
+               f"{counts['restart'] + counts['restart_before']} requieren reinicio, {counts['pending']} pendientes.")
     with state_lock:
-        app_state["updated_count"] = total
-        app_state["progress_percent"] = 100
+        app_state["last_result"] = {"summary": summary, "counts": counts, "packages": results}
+        app_state["current_action"] = summary
         app_state["is_updating"] = False
-        app_state["current_action"] = "Actualización selectiva completada."
-        
-    add_log("=== Actualización selectiva finalizada ===", "success")
-    scan_updates_thread()
+    add_log(summary, "success" if all(r["status"] in ("success", "no_update") for r in results) else "warning")
 
 
 def _find_registry_uninstall_string(pkg_id: str, pkg_name: str = "") -> str:
@@ -596,7 +555,6 @@ def uninstall_thread(pkg_id: str):
         add_log("💡 Sugerencia: Intenta desinstalar manualmente desde Configuración de Windows > Aplicaciones > Aplicaciones instaladas.", "info")
 
     with state_lock:
-        app_state["is_updating"] = False
         app_state["progress_percent"] = 100
         app_state["current_action"] = "Desinstalación concluida."
     scan_updates_thread()
@@ -621,7 +579,6 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
@@ -644,6 +601,9 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                     "updated_ids": list(app_state["updated_ids"]),
                     "failed_ids": list(app_state["failed_ids"]),
                     "uninstalled_ids": list(app_state["uninstalled_ids"]),
+                    "last_result": app_state["last_result"],
+                    "update_blocked": app_state["update_blocked"],
+                    "operation_id": app_state["operation_id"],
                     "app_version": APP_VERSION
                 }
             self.send_json_response(data)
@@ -663,7 +623,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         elif path == "/api/logs":
             query = parse_qs(parsed.query)
-            since_index = int(query.get("since", [0])[0])
+            try:
+                since_index = max(0, int(query.get("since", [0])[0]))
+            except ValueError:
+                self.send_json_response({"message": "Índice no válido"}, 400)
+                return
             with state_lock:
                 all_logs = app_state["logs"]
                 sliced_logs = all_logs[since_index:]
@@ -674,65 +638,66 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-
-        content_length = int(self.headers.get("Content-Length", 0))
-        post_data = self.rfile.read(content_length) if content_length > 0 else b""
-        payload = {}
-        if post_data:
-            try:
-                payload = json.loads(post_data.decode("utf-8"))
-            except Exception:
-                pass
-
-        if path == "/api/scan":
-            if not app_state["is_scanning"] and not app_state["is_updating"]:
-                threading.Thread(target=scan_updates_thread, daemon=True).start()
-                self.send_json_response({"status": "started", "message": "Escaneo iniciado"})
+        path = urlparse(self.path).path
+        origin = self.headers.get("Origin")
+        if self.headers.get("Host") != f"{HOST}:{PORT}" or (origin and origin != f"http://{HOST}:{PORT}"):
+            self.send_json_response({"message": "Origen no permitido"}, 403)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if not 0 <= length <= 65536:
+                raise ValueError()
+            payload = json.loads(self.rfile.read(length)) if length else {}
+            if not isinstance(payload, dict):
+                raise ValueError()
+        except (ValueError, UnicodeError):
+            self.send_json_response({"message": "Petición no válida"}, 400)
+            return
+        scanning = path in ("/api/scan", "/api/scan-all")
+        with state_lock:
+            allowed = [item["id"] for item in app_state["outdated_apps"]]
+            installed = [item["id"] for item in app_state["installed_apps"]]
+            blocked = app_state["update_blocked"]
+        if blocked and not scanning:
+            self.send_json_response({"message": "Revisa el instalador pendiente o reinicia Windows antes de continuar."}, 409)
+            return
+        try:
+            args = ()
+            if path == "/api/scan":
+                target = scan_updates_thread
+            elif path == "/api/scan-all":
+                target = scan_all_installed_thread
+            elif path in ("/api/upgrade-all", "/api/upgrade-selected"):
+                ids = validate_ids(allowed if path.endswith("upgrade-all") else payload.get("ids"), allowed)
+                target, args = upgrade_selected_thread, (ids,)
+            elif path == "/api/uninstall":
+                ids = validate_ids([payload.get("id")], allowed + installed)
+                target, args = uninstall_thread, (ids[0],)
             else:
-                self.send_json_response({"status": "busy", "message": "Operación en curso"}, 409)
-            return
-
-        elif path == "/api/scan-all":
-            threading.Thread(target=scan_all_installed_thread, daemon=True).start()
-            self.send_json_response({"status": "started", "message": "Listado general iniciado"})
-            return
-
-        elif path == "/api/upgrade-all":
-            if not app_state["is_updating"]:
-                threading.Thread(target=upgrade_all_thread, daemon=True).start()
-                self.send_json_response({"status": "started", "message": "Actualización global iniciada"})
-            else:
-                self.send_json_response({"status": "busy", "message": "Ya hay una actualización en curso"}, 409)
-            return
-
-        elif path == "/api/upgrade-selected":
-            package_ids = payload.get("ids", [])
-            if not package_ids:
-                self.send_json_response({"status": "error", "message": "No se enviaron paquetes"}, 400)
+                self.send_json_response({"message": "Acción no disponible"}, 404)
                 return
-            if not app_state["is_updating"]:
-                threading.Thread(target=upgrade_selected_thread, args=(package_ids,), daemon=True).start()
-                self.send_json_response({"status": "started", "count": len(package_ids)})
-            else:
-                self.send_json_response({"status": "busy", "message": "Ya hay una actualización en curso"}, 409)
+        except ValueError as exc:
+            self.send_json_response({"message": str(exc)}, 400)
             return
-
-        elif path == "/api/uninstall":
-            pkg_id = payload.get("id", "").strip()
-            if not pkg_id:
-                self.send_json_response({"status": "error", "message": "Identificador no válido"}, 400)
-                return
-            if not app_state["is_updating"]:
-                threading.Thread(target=uninstall_thread, args=(pkg_id,), daemon=True).start()
-                self.send_json_response({"status": "started", "message": f"Desinstalando {pkg_id}"})
-            else:
-                self.send_json_response({"status": "busy", "message": "Ya hay una operación en curso"}, 409)
+        def recheck():
+            with state_lock:
+                if app_state["update_blocked"] and not scanning:
+                    raise ValueError("Revisa el instalador pendiente o reinicia Windows antes de continuar.")
+                current_allowed = [item["id"] for item in app_state["outdated_apps"]]
+                current_installed = [item["id"] for item in app_state["installed_apps"]]
+            if path in ("/api/upgrade-all", "/api/upgrade-selected"):
+                validate_ids(args[0], current_allowed)
+            elif path == "/api/uninstall":
+                validate_ids([args[0]], current_allowed + current_installed)
+        try:
+            started = start_operation(target, args, scanning=scanning, preflight=recheck)
+        except ValueError as exc:
+            self.send_json_response({"message": str(exc)}, 409)
             return
-
-        self.send_response(404)
-        self.end_headers()
+        if started:
+            self.send_json_response({"status": "started", "message": "Operación iniciada"})
+        else:
+            self.send_json_response({"status": "busy", "message": "Ya hay una operación en curso"}, 409)
 
 
 class ReusableHTTPServer(ThreadingHTTPServer):
@@ -802,7 +767,6 @@ def main():
         sys.exit(0)
 
     # 2. Si no estaba corriendo, limpiar posibles procesos muertos e iniciar
-    free_port(PORT)
     while not is_port_available(PORT) and PORT < 5060:
         PORT += 1
 
@@ -816,8 +780,11 @@ def main():
     print(f"============================================================")
 
     # Iniciar escaneo inicial en segundo plano
-    threading.Thread(target=scan_updates_thread, daemon=True).start()
-    threading.Thread(target=scan_all_installed_thread, daemon=True).start()
+    def initial_scan():
+        scan_updates_thread()
+        scan_all_installed_thread()
+    if "--no-scan" not in sys.argv:
+        start_operation(initial_scan, scanning=True)
 
     if "--no-browser" not in sys.argv:
         threading.Thread(target=open_desktop_window, args=(app_url,), daemon=True).start()

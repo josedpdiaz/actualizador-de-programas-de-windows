@@ -38,7 +38,7 @@ if (Test-Path $backupScriptPath) {
 }
 
 # 3. Verificar que los archivos clave se copiaron correctamente
-$requiredFiles = @("app.py", "iniciar.bat", "iniciar-silencioso.vbs", "web")
+$requiredFiles = @("app.py", "update_engine.py", "iniciar.bat", "iniciar-silencioso.vbs", "web")
 $allPresent = $true
 foreach ($file in $requiredFiles) {
     $destFile = Join-Path $targetDir $file

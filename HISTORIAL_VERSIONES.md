@@ -6,6 +6,26 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/
 
 ---
 
+## [v1.4.0] — 18/10/2026
+
+### Mejoras
+- Actualización por cola de la lista mostrada, con identificadores exactos y sin forzar versiones desconocidas.
+- Progreso por programa, tiempo transcurrido y resumen con resultados separados.
+- Inicio opcional como administrador, conservando UAC y sin privilegios persistentes.
+- Escaneos iniciales en serie y eliminación del cierre forzado de procesos para liberar el puerto.
+
+### Correcciones
+- Supervisión de esperas independiente de la salida del instalador, incluso tras cerrar la salida.
+- Reserva atómica de operaciones y nueva validación de selección/bloqueo tras reservar.
+- Los fallos parciales ya no se anuncian como éxito total.
+- La tabla se refresca al completar el escaneo aunque no cambie el número de programas.
+- Los fallos de escaneo conservan la lista anterior y muestran error.
+- Las peticiones desde otros orígenes se rechazan y se validan las entradas de la API.
+
+### Validación y límites
+- 14 pruebas Python y 3 comprobaciones de actualización de la tabla; revisión independiente y visual.
+- No se han actualizado aplicaciones reales durante la validación. No se promete eliminar los permisos UAC ni acelerar los instaladores de terceros.
+
 ## 🚀 [v1.3.0] — 05/09/2026
 ### ✨ Novedades
 - **Desinstalación Robusta con Fallbacks Escalonados (4 niveles):**
