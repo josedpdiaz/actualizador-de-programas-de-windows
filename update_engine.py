@@ -37,8 +37,10 @@ def validate_ids(values, allowed):
     return result
 
 
-def upgrade_command(package_id):
-    return ['winget', 'upgrade', '--id', package_id, '--exact', '--silent',
+def upgrade_command(package_id, source='winget'):
+    if not isinstance(source, str) or not source.strip() or source.startswith('-'):
+        raise ValueError('No se ha identificado el origen del programa; vuelve a escanear.')
+    return ['winget', 'upgrade', '--id', package_id, '--source', source, '--exact', '--silent',
             '--disable-interactivity', '--accept-package-agreements', '--accept-source-agreements']
 
 

@@ -6,6 +6,12 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/
 
 ---
 
+## [v1.4.1] — 18/10/2026
+
+- Cada actualización utiliza el origen de la fila detectada. Por ejemplo, VLC consulta únicamente `winget`, evitando que un error de certificado en otro origen como `msstore` impida su búsqueda.
+- Se conservan las comprobaciones de certificados, hashes y permisos.
+- Verificación: consulta real de la ficha de VLC con origen explícito; 15 pruebas Python y 3 comprobaciones de polling. La instalación de VLC queda pendiente de repetir desde la interfaz.
+
 ## [v1.4.0] — 18/10/2026
 
 ### Mejoras

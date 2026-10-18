@@ -31,7 +31,7 @@ PORT = 5055
 HOST = "127.0.0.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 # Estado global de la aplicación
 app_state = {
@@ -252,11 +252,12 @@ def upgrade_selected_thread(package_ids):
     for index, pkg_id in enumerate(package_ids):
         with state_lock:
             app_state["current_action"] = f"Preparando [{index + 1}/{total}]: {pkg_id}"
+            source = next((item.get("source", "winget") for item in app_state["outdated_apps"] if item["id"] == pkg_id), "winget")
         def tick(seconds):
             with state_lock:
                 app_state["current_action"] = f"[{index + 1}/{total}] {pkg_id} · {seconds}s. Descargando o instalando; comprueba si Windows solicita permiso."
         try:
-            result = run_command(upgrade_command(pkg_id),
+            result = run_command(upgrade_command(pkg_id, source=source),
                                  lambda line: add_log(f"[{pkg_id}] {line}", "process"),
                                  timeout=1800, on_tick=tick)
             kind = "timeout" if result.timed_out else result_kind(result.code)

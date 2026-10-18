@@ -34,6 +34,14 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn('--include-unknown', command)
         self.assertNotIn('--force', command)
 
+    def test_command_searches_only_the_catalog_that_identified_the_app(self):
+        command = engine.upgrade_command('VideoLAN.VLC', source='winget')
+        self.assertEqual(command[command.index('--source') + 1], 'winget')
+        store = engine.upgrade_command('Store.App', source='msstore')
+        self.assertEqual(store[store.index('--source') + 1], 'msstore')
+        with self.assertRaises(ValueError):
+            engine.upgrade_command('Vendor.App', source='')
+
     def test_ids_must_be_strings_from_displayed_catalog(self):
         self.assertEqual(engine.validate_ids(['A.App', 'A.App'], ['A.App']), ['A.App'])
         for value in ['A.App', [1], ['Other.App'], ['--all'], []]:
