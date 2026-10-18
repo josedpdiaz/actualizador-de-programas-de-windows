@@ -1,4 +1,4 @@
-# Actualizador de Programas de Windows ⚡ (v1.4.0)
+# Actualizador de Programas de Windows ⚡ (v1.5.0)
 
 Aplicación de escritorio moderna, ultraligera y eficiente para detectar todos los programas instalados en Windows, actualizarlos automáticamente a su última versión o desinstalarlos de forma oficial y al vuelo.
 
@@ -53,10 +53,14 @@ powershell -ExecutionPolicy Bypass -File .\Crear-Acceso-Directo.ps1
 ## 📦 Repositorio Oficial en GitHub
 
 - **URL:** [https://github.com/josedpdiaz/actualizador-de-programas-de-windows](https://github.com/josedpdiaz/actualizador-de-programas-de-windows)
-- **Versión Actual:** `v1.4.0`
+- **Versión Actual:** `v1.5.0`
 - **Autor:** Jose D. Díaz
 
-## Versión 1.4.0: actualizaciones con seguimiento
+## Versión 1.5.0: actividad y actualizaciones con seguimiento
+
+Cada fila muestra En ejecución, Sin actividad detectada o Sin comprobar. Las aplicaciones activas quedan desmarcadas. Puedes abrir el Administrador de tareas con el botón, buscar los procesos indicados y volver a pulsar Comprobar actividad. El actualizador no cierra aplicaciones.
+
+La actualización conjunta procesa solo programas sin actividad detectada. Las aplicaciones Sin comprobar requieren revisión y selección manual. No detectar actividad no garantiza que la aplicación esté cerrada: la comprobación usa asociaciones explícitas de nombres de procesos y una caché de hasta cinco segundos. Comprobar actividad fuerza una consulta nueva. Consulta [los detalles y límites](docs/ACTIVIDAD-1.5.md).
 
 - Cola basada en la lista revisada, identificadores exactos y bloqueo de operaciones simultáneas.
 - Resumen de actualizados, fallidos, no aplicables, reinicios y pendientes. Los fallos no se presentan como éxito general.
@@ -75,6 +79,7 @@ Si se agota el tiempo, la cola se detiene y bloquea más instalaciones o desinst
 ```powershell
 python -m unittest discover -s tests -v
 node tests/test_polling.js
+node tests/test_activity_ui.js
 python -m py_compile app.py update_engine.py
 node --check web/app.js
 ```

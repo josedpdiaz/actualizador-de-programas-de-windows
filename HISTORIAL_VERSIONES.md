@@ -6,6 +6,16 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/
 
 ---
 
+## [v1.5.0] — 18/10/2026
+
+- Indicador por aplicación: En ejecución, Sin actividad detectada y Sin comprobar.
+- Identificación conservadora por nombres exactos de procesos conocidos, incluyendo procesos sin ventana. Los programas sin asociación fiable quedan Sin comprobar.
+- Las aplicaciones activas quedan desmarcadas y su actualización se bloquea mientras se detectan en ejecución. La actualización conjunta toma únicamente las que no tienen actividad detectada; las desconocidas requieren selección manual.
+- Botones para abrir el Administrador de tareas y volver a comprobar la actividad. Se muestran los nombres de procesos y sus identificadores para ayudar a encontrarlos. No se selecciona automáticamente un proceso en el Administrador de tareas ni se termina ninguno.
+- Comprobación nueva antes de aceptar actualizaciones y consulta de actividad antes de cada paquete. Si una aplicación aparece activa durante la cola, queda pendiente.
+- La consulta de procesos usa una caché de hasta cinco segundos; Comprobar actividad solicita una lectura nueva. No detectar procesos no garantiza que no haya actividad, servicios, archivos abiertos o trabajo pendiente.
+- Validación: 21 pruebas Python y 10 comprobaciones JavaScript, revisión independiente, consulta real de procesos y comprobación visual con instalaciones bloqueadas.
+
 ## [v1.4.1] — 18/10/2026
 
 - Cada actualización utiliza el origen de la fila detectada. Por ejemplo, VLC consulta únicamente `winget`, evitando que un error de certificado en otro origen como `msstore` impida su búsqueda.

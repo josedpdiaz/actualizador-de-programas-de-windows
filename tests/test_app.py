@@ -12,10 +12,14 @@ from update_engine import CommandResult
 class AppTests(unittest.TestCase):
     def setUp(self):
         self.original = copy.deepcopy(app.app_state)
+        self.activity_patch = patch.object(app, 'annotate_activity', side_effect=lambda items, force=False:
+            [{**item, 'activity': {'status': 'not_detected', 'label': 'Sin actividad detectada', 'processes': []}} for item in items])
+        self.activity_patch.start()
         app.app_state.update(outdated_apps=[{'id': 'A.App'}, {'id': 'B.App'}],
                              installed_apps=[], update_blocked=False, logs=[], last_result=None)
 
     def tearDown(self):
+        self.activity_patch.stop()
         app.app_state.clear()
         app.app_state.update(self.original)
 
@@ -70,11 +74,11 @@ class AppTests(unittest.TestCase):
         thread.start()
         previous_port = app.PORT
         app.PORT = server.server_port
-        def request(body, origin=None):
+        def request(body, origin=None, path='/api/upgrade-selected'):
             connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=3)
             headers = {'Content-Type': 'application/json'}
             if origin: headers['Origin'] = origin
-            connection.request('POST', '/api/upgrade-selected', body, headers)
+            connection.request('POST', path, body, headers)
             response = connection.getresponse()
             result = response.status, json.loads(response.read())
             connection.close()
@@ -86,7 +90,7 @@ class AppTests(unittest.TestCase):
             self.assertEqual(request('{"ids":["Other.App"]}')[0], 400)
             entered = threading.Event()
             release = threading.Event()
-            def waiting_worker(ids):
+            def waiting_worker(ids, require_inactive=False):
                 entered.set()
                 release.wait(3)
             with patch.object(app, 'upgrade_selected_thread', side_effect=waiting_worker):
@@ -97,11 +101,33 @@ class AppTests(unittest.TestCase):
                 for _ in range(100):
                     if not app.app_state['is_updating']: break
                     threading.Event().wait(.01)
+            def checked(items, force=False):
+                return [{**item, 'activity': {'status': 'running' if item['id'] == 'A.App' else 'not_detected', 'label':'estado'}} for item in items]
+            with patch.object(app, 'annotate_activity', side_effect=checked):
+                self.assertEqual(request('{"ids":["A.App"]}')[0], 409)
+                done = threading.Event()
+                chosen = []
+                def capture(ids, require_inactive=False):
+                    chosen.extend(ids)
+                    done.set()
+                with patch.object(app, 'upgrade_selected_thread', side_effect=capture):
+                    self.assertEqual(request('{}', path='/api/upgrade-all')[0], 200)
+                    self.assertTrue(done.wait(1))
+                    self.assertEqual(chosen, ['B.App'])
+            with patch.object(app, 'open_task_manager') as opened:
+                self.assertEqual(request('{}', path='/api/task-manager')[0], 200)
+                opened.assert_called_once()
         finally:
             app.PORT = previous_port
             server.shutdown()
             server.server_close()
             thread.join(2)
+
+    def test_app_started_after_selection_is_deferred_without_running_installer(self):
+        with patch.object(app, 'annotate_activity', return_value=[{'id':'A.App', 'activity': {'status':'running','label':'En ejecución'}}]), patch.object(app, 'run_command') as run:
+            app.upgrade_selected_thread(['A.App'])
+        run.assert_not_called()
+        self.assertEqual(app.app_state['last_result']['counts']['pending'], 1)
 
 
 if __name__ == '__main__':

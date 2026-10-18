@@ -13,6 +13,7 @@ import time
 import socket
 import threading
 from update_engine import OperationGate, run_command, upgrade_command, validate_ids, result_kind
+from activity import annotate_activity, open_task_manager
 import subprocess
 import webbrowser
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -31,7 +32,7 @@ PORT = 5055
 HOST = "127.0.0.1"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.5.0"
 
 # Estado global de la aplicación
 app_state = {
@@ -242,7 +243,7 @@ def upgrade_all_thread():
     upgrade_selected_thread(ids)
 
 
-def upgrade_selected_thread(package_ids):
+def upgrade_selected_thread(package_ids, require_inactive=False):
     total = len(package_ids)
     results = []
     with state_lock:
@@ -257,11 +258,16 @@ def upgrade_selected_thread(package_ids):
             with state_lock:
                 app_state["current_action"] = f"[{index + 1}/{total}] {pkg_id} · {seconds}s. Descargando o instalando; comprueba si Windows solicita permiso."
         try:
-            result = run_command(upgrade_command(pkg_id, source=source),
-                                 lambda line: add_log(f"[{pkg_id}] {line}", "process"),
-                                 timeout=1800, on_tick=tick)
-            kind = "timeout" if result.timed_out else result_kind(result.code)
-            entry = {"id": pkg_id, "status": kind, "code": result.code}
+            activity = annotate_activity([{"id": pkg_id}])[0]["activity"]
+            if activity["status"] == "running" or (require_inactive and activity["status"] != "not_detected"):
+                kind = "pending"
+                entry = {"id": pkg_id, "status": kind, "code": None, "reason": activity["label"]}
+            else:
+                result = run_command(upgrade_command(pkg_id, source=source),
+                                     lambda line: add_log(f"[{pkg_id}] {line}", "process"),
+                                     timeout=1800, on_tick=tick)
+                kind = "timeout" if result.timed_out else result_kind(result.code)
+                entry = {"id": pkg_id, "status": kind, "code": result.code}
         except Exception as exc:
             entry = {"id": pkg_id, "status": "failed", "code": None, "reason": str(exc)}
             kind = "failed"
@@ -272,7 +278,7 @@ def upgrade_selected_thread(package_ids):
             if kind == "success":
                 app_state["updated_ids"].append(pkg_id)
                 app_state["outdated_apps"] = [a for a in app_state["outdated_apps"] if a["id"] != pkg_id]
-            elif kind not in ("no_update",):
+            elif kind not in ("no_update", "pending"):
                 app_state["failed_ids"].append({**entry, "reason": kind})
         messages = {
             "success": "Actualizado según el resultado del instalador.",
@@ -280,6 +286,7 @@ def upgrade_selected_thread(package_ids):
             "restart": "Necesita reiniciar para completar la instalación. Cola detenida.",
             "restart_before": "Necesita reiniciar antes de instalar. Cola detenida.",
             "timeout": "Superados 30 minutos. Cola detenida; el instalador podría seguir abierto. Revísalo antes de volver a actualizar.",
+            "pending": "Se deja pendiente por su actividad. Revisa el programa y vuelve a comprobar su estado.",
             "failed": "No se pudo actualizar. Consulta el resultado del instalador en el registro."
         }
         add_log(f"{pkg_id}: {messages[kind]}", "success" if kind == "success" else "warning")
@@ -612,7 +619,8 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         elif path == "/api/apps":
             with state_lock:
-                data = app_state["outdated_apps"]
+                items = list(app_state["outdated_apps"])
+            data = annotate_activity(items, force=parse_qs(parsed.query).get("activity") == ["refresh"])
             self.send_json_response(data)
             return
 
@@ -654,6 +662,13 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         except (ValueError, UnicodeError):
             self.send_json_response({"message": "Petición no válida"}, 400)
             return
+        if path == "/api/task-manager":
+            try:
+                open_task_manager()
+                self.send_json_response({"message": "Administrador de tareas abierto. Busca el nombre del proceso indicado y vuelve a comprobar la actividad."})
+            except OSError:
+                self.send_json_response({"message": "No se pudo abrir. Puedes usar Ctrl+Mayús+Esc."}, 500)
+            return
         scanning = path in ("/api/scan", "/api/scan-all")
         with state_lock:
             allowed = [item["id"] for item in app_state["outdated_apps"]]
@@ -670,7 +685,7 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 target = scan_all_installed_thread
             elif path in ("/api/upgrade-all", "/api/upgrade-selected"):
                 ids = validate_ids(allowed if path.endswith("upgrade-all") else payload.get("ids"), allowed)
-                target, args = upgrade_selected_thread, (ids,)
+                target, args = upgrade_selected_thread, (ids, path == "/api/upgrade-all")
             elif path == "/api/uninstall":
                 ids = validate_ids([payload.get("id")], allowed + installed)
                 target, args = uninstall_thread, (ids[0],)
@@ -688,6 +703,13 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 current_installed = [item["id"] for item in app_state["installed_apps"]]
             if path in ("/api/upgrade-all", "/api/upgrade-selected"):
                 validate_ids(args[0], current_allowed)
+                checked = annotate_activity([{"id": item} for item in args[0]], force=True)
+                if path == "/api/upgrade-all":
+                    args[0][:] = [item["id"] for item in checked if item["activity"]["status"] == "not_detected"]
+                    if not args[0]:
+                        raise ValueError("No hay programas sin actividad detectada. Revisa los estados o selecciona manualmente uno sin comprobar.")
+                elif any(item["activity"]["status"] == "running" for item in checked):
+                    raise ValueError("Hay programas en ejecución. Revísalos en el Administrador de tareas y pulsa Comprobar actividad antes de actualizar.")
             elif path == "/api/uninstall":
                 validate_ids([args[0]], current_allowed + current_installed)
         try:

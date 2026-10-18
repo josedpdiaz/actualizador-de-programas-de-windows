@@ -9,10 +9,14 @@ let knownUninstalledIds = new Set();
 let lastLogIndex = 0;
 let pollTimer = null;
 let isUpdatingOrScanning = false;
+let selectionInitialized = false;
+let updatesBlocked = false;
 
 // Elementos DOM
 const dom = {
   btnScan: document.getElementById('btn-scan'),
+  btnActivity: document.getElementById('btn-activity'),
+  btnTaskManager: document.getElementById('btn-task-manager'),
   btnUpgradeAll: document.getElementById('btn-upgrade-all'),
   btnUpgradeSelected: document.getElementById('btn-upgrade-selected'),
   selectedCount: document.getElementById('selected-count'),
@@ -72,6 +76,8 @@ function setupEventListeners() {
 
   // Botón Escanear
   dom.btnScan.addEventListener('click', triggerScan);
+  dom.btnActivity.addEventListener('click', refreshActivity);
+  dom.btnTaskManager.addEventListener('click', () => reviewActivity());
 
   // Botón Actualizar Todo
   dom.btnUpgradeAll.addEventListener('click', triggerUpgradeAll);
@@ -96,7 +102,7 @@ function setupEventListeners() {
     const isChecked = e.target.checked;
     const filtered = getFilteredOutdated();
     filtered.forEach(app => {
-      if (isChecked) {
+      if (isChecked && ActivityUI.state(app) === 'not_detected') {
         selectedAppIds.add(app.id);
       } else {
         selectedAppIds.delete(app.id);
@@ -153,6 +159,7 @@ async function checkStatus() {
     const status = await res.json();
 
     isUpdatingOrScanning = status.is_scanning || status.is_updating;
+    updatesBlocked = Boolean(status.update_blocked);
 
     // Actualizar KPIs
     dom.statOutdated.textContent = status.outdated_count;
@@ -211,7 +218,7 @@ async function checkStatus() {
                 </svg>
                 <span>Revisar</span>
               `;
-              btn.disabled = false;
+              btn.disabled = updatesBlocked || ActivityUI.state(outdatedApps.find(app => app.id === pkgId) || {}) === 'running';
               btn.title = "El instalador reportó un aviso o incompatibilidad de versión. Consulta la pestaña Terminal en Vivo.";
             }
             break;
@@ -226,7 +233,8 @@ async function checkStatus() {
       icon.classList.toggle('spinning', status.is_scanning);
     }
     dom.btnScan.disabled = isUpdatingOrScanning;
-    dom.btnUpgradeAll.disabled = isUpdatingOrScanning || status.update_blocked || status.outdated_count === 0;
+    dom.btnUpgradeAll.disabled = isUpdatingOrScanning || status.update_blocked || ActivityUI.candidates(outdatedApps).length === 0;
+    dom.btnActivity.disabled = isUpdatingOrScanning;
 
     // Barra de Progreso
     if (status.is_updating || status.last_result) {
@@ -359,17 +367,15 @@ function animateAndRemoveUninstalledApp(pkgId) {
   showToast(`🗑️ "${pkgId}" se ha desinstalado oficialmente.`, "success");
 }
 
-async function loadOutdatedApps() {
+async function loadOutdatedApps(refresh = false) {
   try {
-    const res = await fetch('/api/apps');
+    const res = await fetch(refresh ? '/api/apps?activity=refresh' : '/api/apps');
     if (!res.ok) return;
     const data = await res.json();
     outdatedApps = data;
     
-    // Por defecto seleccionar todas las nuevas detectadas
-    if (selectedAppIds.size === 0 && outdatedApps.length > 0) {
-      outdatedApps.forEach(a => selectedAppIds.add(a.id));
-    }
+    selectedAppIds = ActivityUI.selection(outdatedApps, selectedAppIds, selectionInitialized);
+    if (outdatedApps.length > 0) selectionInitialized = true;
     
     dom.statOutdated.textContent = outdatedApps.length;
     dom.tabBadgeOutdated.textContent = outdatedApps.length;
@@ -377,6 +383,7 @@ async function loadOutdatedApps() {
     updateSelectionUI();
   } catch (err) {
     console.error("Error cargando apps pendientes:", err);
+    showToast('No se pudo comprobar la actividad. Vuelve a intentarlo.', 'warning');
   }
 }
 
@@ -441,7 +448,7 @@ function getFilteredInstalled() {
 // Renderizado de Tablas
 function renderOutdatedTable() {
   const filtered = getFilteredOutdated();
-  dom.visibleCount.textContent = filtered.length;
+  dom.visibleCount.textContent = ActivityUI.candidates(filtered).length;
 
   if (filtered.length === 0) {
     if (outdatedApps.length === 0) {
@@ -478,14 +485,14 @@ function renderOutdatedTable() {
       <tr data-id="${escapeHtml(app.id)}">
         <td>
           <label class="checkbox-container">
-            <input type="checkbox" class="row-checkbox" data-id="${escapeHtml(app.id)}" ${isChecked ? 'checked' : ''}>
+            <input type="checkbox" class="row-checkbox" data-id="${escapeHtml(app.id)}" ${isChecked ? 'checked' : ''} ${ActivityUI.state(app) === 'running' ? 'disabled' : ''}>
             <span class="checkmark"></span>
           </label>
         </td>
         <td>
           <div class="app-name-cell">
             <div class="app-avatar">${initial}</div>
-            <span class="app-title-text">${escapeHtml(app.name)}</span>
+            <div class="app-title-and-activity"><span class="app-title-text">${escapeHtml(app.name)}</span>${ActivityUI.render(app, escapeHtml)}</div>
           </div>
         </td>
         <td>
@@ -508,7 +515,7 @@ function renderOutdatedTable() {
         </td>
         <td class="text-right">
           <div class="actions-cell">
-            <button class="btn-row-action btn-update-single" data-pkg-id="${escapeHtml(app.id)}" data-pkg-name="${escapeHtml(app.name)}" title="Actualizar a la última versión">
+            <button class="btn-row-action btn-update-single" data-pkg-id="${escapeHtml(app.id)}" data-pkg-name="${escapeHtml(app.name)}" title="Actualizar a la última versión" ${ActivityUI.state(app) === 'running' ? 'disabled' : ''}>
               Actualizar
             </button>
             <button class="btn-row-uninstall btn-uninstall-single" data-pkg-id="${escapeHtml(app.id)}" data-pkg-name="${escapeHtml(app.name)}" title="Desinstalar este programa">
@@ -525,6 +532,9 @@ function renderOutdatedTable() {
   });
 
   dom.outdatedTableBody.innerHTML = html;
+  dom.outdatedTableBody.querySelectorAll('.btn-review-activity').forEach(btn => {
+    btn.addEventListener('click', () => reviewActivity(btn.getAttribute('data-pkg-id')));
+  });
 
   // Listeners a los checkboxes individuales
   dom.outdatedTableBody.querySelectorAll('.row-checkbox').forEach(cb => {
@@ -613,9 +623,12 @@ function renderInstalledTable() {
 function updateSelectionUI() {
   const count = selectedAppIds.size;
   dom.selectedCount.textContent = count;
-  dom.btnUpgradeSelected.disabled = (count === 0) || isUpdatingOrScanning;
+  const candidates = ActivityUI.candidates(outdatedApps).length;
+  dom.btnUpgradeAll.textContent = `Actualizar sin actividad detectada (${candidates})`;
+  dom.btnUpgradeAll.disabled = isUpdatingOrScanning || updatesBlocked || candidates === 0;
+  dom.btnUpgradeSelected.disabled = (count === 0) || isUpdatingOrScanning || updatesBlocked;
 
-  const filtered = getFilteredOutdated();
+  const filtered = ActivityUI.candidates(getFilteredOutdated());
   if (filtered.length === 0) {
     dom.selectAllCheckbox.checked = false;
     dom.selectAllCheckbox.indeterminate = false;
@@ -694,8 +707,8 @@ async function triggerScan() {
 
 function triggerUpgradeAll() {
   showConfirmModal(
-    "⚡ ¿Actualizar Todos los Programas?",
-    `Se actualizarán uno a uno los ${outdatedApps.length} programas de esta lista. Windows puede solicitar permisos. No se reiniciará el equipo automáticamente.`,
+    "¿Actualizar los programas sin actividad detectada?",
+    `Se actualizarán hasta ${ActivityUI.candidates(outdatedApps).length} programas sin actividad detectada. Los demás quedan pendientes. Se volverá a comprobar su actividad antes de comenzar. Windows puede solicitar permisos. No se reiniciará el equipo automáticamente.`,
     async () => {
       try {
         showToast("Iniciando actualización automática global...", "info");
@@ -721,7 +734,7 @@ function triggerUpgradeSelected() {
 
   showConfirmModal(
     `¿Actualizar los ${ids.length} programas seleccionados?`,
-    `Se actualizarán únicamente los ${ids.length} programas marcados con casilla.`,
+    `Se actualizarán únicamente los ${ids.length} programas marcados. Los que figuran sin comprobar requieren tu revisión. No se cerrará ninguna aplicación automáticamente.`,
     async () => {
       try {
         showToast(`Iniciando actualización de ${ids.length} programas...`, "info");
@@ -742,7 +755,17 @@ function triggerUpgradeSelected() {
   );
 }
 
-async function executeUpgradeSingle(id, name, buttonEl) {
+async function executeUpgradeSingle(id, name, buttonEl, reviewed = false) {
+  const app = outdatedApps.find(item => item.id === id);
+  if (app && ActivityUI.state(app) === 'running') {
+    showToast('La aplicación está en ejecución. Revísala y pulsa Comprobar actividad.', 'warning');
+    return;
+  }
+  if (app && ActivityUI.state(app) === 'unknown' && !reviewed) {
+    showConfirmModal('Actividad sin comprobar', `No podemos comprobar si ${name} está en ejecución. Revísala antes de continuar.`,
+      () => executeUpgradeSingle(id, name, buttonEl, true));
+    return;
+  }
   if (isUpdatingOrScanning) {
     showToast("Ya hay una tarea en ejecución. Espera a que finalice.", "warning");
     return;
@@ -865,4 +888,28 @@ function escapeHtml(text) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+// Revisión de actividad sin cerrar procesos.
+async function refreshActivity() {
+  dom.btnActivity.disabled = true;
+  dom.btnActivity.textContent = 'Comprobando…';
+  try { await loadOutdatedApps(true); }
+  finally {
+    dom.btnActivity.textContent = 'Comprobar actividad';
+    dom.btnActivity.disabled = isUpdatingOrScanning;
+  }
+}
+
+async function reviewActivity(id = null) {
+  const app = outdatedApps.find(item => item.id === id);
+  const names = [...new Set((app?.activity?.processes || []).map(process => process.name))];
+  try {
+    const response = await fetch('/api/task-manager', {method:'POST'});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message);
+    showToast(names.length ? `Busca ${names.join(', ')}. Al volver, pulsa Comprobar actividad.` : data.message, 'info');
+  } catch (error) {
+    showToast(error.message || 'Puedes abrir el Administrador de tareas con Ctrl+Mayús+Esc.', 'warning');
+  }
 }
